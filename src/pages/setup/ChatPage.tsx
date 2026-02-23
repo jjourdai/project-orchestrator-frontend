@@ -1,11 +1,20 @@
 import { useAtom, useSetAtom, useAtomValue } from 'jotai'
 import { useCallback, useEffect, useState } from 'react'
 import { Check, CheckCircle2, AlertCircle, Loader2, RotateCw, Download, XCircle } from 'lucide-react'
+import { ProgressBar } from '@/components/ui/ProgressBar'
 import { setupConfigAtom, chatValidAtom, trayNavigationAtom, type McpSetupStatus } from '@/atoms/setup'
 import { isTauri } from '@/services/env'
 import { useToast } from '@/hooks'
 import { AVAILABLE_MODELS } from '@/constants/models'
 import type { CliVersionStatus } from '@/types'
+
+/** Format bytes into a human-readable string (KB, MB, GB). */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
+}
 
 const PERMISSION_MODES = [
   {
@@ -48,6 +57,12 @@ export function ChatPage() {
   const [embeddingEstimatedSize, setEmbeddingEstimatedSize] = useState(0)
   const [downloadingModel, setDownloadingModel] = useState(false)
   const [downloadError, setDownloadError] = useState<string | null>(null)
+  const [downloadProgress, setDownloadProgress] = useState<{
+    downloadedBytes: number
+    totalBytes: number
+    percentage: number
+    status: string
+  } | null>(null)
   // HTTP embedding endpoint test states
   const [embeddingTestResult, setEmbeddingTestResult] = useState<{ success: boolean; dimensions?: number; latencyMs?: number } | null>(null)
   const [testingEmbedding, setTestingEmbedding] = useState(false)
@@ -240,13 +255,29 @@ export function ChatPage() {
       if (isTauri) {
         const { invoke } = await import('@tauri-apps/api/core')
         const result = await invoke<{ success: boolean; version: string | null; message: string; cli_path: string | null }>('install_cli', { version: version ?? null })
-        if (result.success) {
-          toast.success(result.message)
-          // Refresh status after install — update cliDetected
-          const status = await invoke<CliVersionStatus>('check_cli_status')
-          setCliStatus(status)
-          setCliDetected(status.installed)
-          setConfig((prev) => ({ ...prev, claudeCodeDetected: status.installed }))
+
+        // Always verify CLI status after install attempt — the install script
+        // may have succeeded even if download_cli reported failure (e.g. the
+        // official script installed to ~/.local/bin but post-install checks
+        // didn't find it in the process PATH).
+        let status: CliVersionStatus | null = null
+        try {
+          status = await invoke<CliVersionStatus>('check_cli_status')
+        } catch {
+          // check_cli_status failed — fall through to result-only logic
+        }
+
+        if (result.success || status?.installed) {
+          toast.success(result.success ? result.message : 'Claude Code detected successfully')
+          if (status) {
+            setCliStatus(status)
+            setCliDetected(status.installed)
+            setConfig((prev) => ({ ...prev, claudeCodeDetected: status!.installed }))
+          } else {
+            setCliDetected(true)
+            setConfig((prev) => ({ ...prev, claudeCodeDetected: true }))
+          }
+          setInstallError(null)
         } else {
           setInstallError(result.message)
           toast.error(result.message)
@@ -267,8 +298,23 @@ export function ChatPage() {
     if (!isTauri) return
     setDownloadingModel(true)
     setDownloadError(null)
+    setDownloadProgress(null)
+
+    let unlisten: (() => void) | null = null
     try {
       const { invoke } = await import('@tauri-apps/api/core')
+      const { listen } = await import('@tauri-apps/api/event')
+
+      // Listen for progress events from the Rust backend
+      unlisten = await listen<{
+        downloadedBytes: number
+        totalBytes: number
+        percentage: number
+        status: string
+      }>('embedding-download-progress', (event) => {
+        setDownloadProgress(event.payload)
+      })
+
       const result = await invoke<{ success: boolean; modelPath: string; error: string | null }>(
         'download_embedding_model', { modelName: config.embeddingFastembedModel }
       )
@@ -285,7 +331,9 @@ export function ChatPage() {
       setDownloadError(msg)
       toast.error(msg)
     } finally {
+      unlisten?.()
       setDownloadingModel(false)
+      setDownloadProgress(null)
     }
   }, [config.embeddingFastembedModel, toast])
 
@@ -566,10 +614,25 @@ export function ChatPage() {
                   className="flex w-full items-center justify-center gap-2 rounded-lg bg-amber-500/15 px-3 py-2 text-xs font-medium text-amber-300 transition hover:bg-amber-500/25 disabled:opacity-50"
                 >
                   {downloadingModel ? (
-                    <>
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      Downloading model — this may take a minute…
-                    </>
+                    downloadProgress && downloadProgress.totalBytes > 0 ? (
+                      <div className="w-full space-y-1.5">
+                        <ProgressBar value={downloadProgress.percentage} shimmer size="md" />
+                        <div className="flex items-center justify-between text-[10px] text-amber-400/70">
+                          <span>{formatBytes(downloadProgress.downloadedBytes)} / {formatBytes(downloadProgress.totalBytes)}</span>
+                          <span>{Math.min(100, downloadProgress.percentage).toFixed(0)}%</span>
+                        </div>
+                      </div>
+                    ) : downloadProgress && downloadProgress.downloadedBytes > 0 ? (
+                      <div className="flex items-center justify-center gap-2">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        <span>{formatBytes(downloadProgress.downloadedBytes)} downloaded…</span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-center gap-2">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        <span>Preparing download…</span>
+                      </div>
+                    )
                   ) : (
                     <>
                       <Download className="h-3.5 w-3.5" />
