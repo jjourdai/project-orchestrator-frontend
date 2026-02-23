@@ -132,10 +132,25 @@ export function SetupWizard() {
             chatPermissionMode: (['default', 'acceptEdits', 'bypassPermissions', 'plan'].includes(existing.chatPermissionMode as string)
               ? existing.chatPermissionMode
               : prev.chatPermissionMode) as SetupConfig['chatPermissionMode'],
+            // Desktop-only settings (PATH, CLI, auto-update)
+            chatProcessPath: (existing.chatProcessPath as string) || '',
+            chatClaudeCliPath: (existing.chatClaudeCliPath as string) || '',
+            chatAutoUpdateCli: (existing.chatAutoUpdateCli as boolean) ?? prev.chatAutoUpdateCli,
+            chatAutoUpdateApp: (existing.chatAutoUpdateApp as boolean) ?? prev.chatAutoUpdateApp,
+            // Embedding provider
+            embeddingProvider: (['local', 'http', 'disabled'].includes(existing.embeddingProvider as string)
+              ? existing.embeddingProvider
+              : prev.embeddingProvider) as SetupConfig['embeddingProvider'],
+            embeddingFastembedModel: (existing.embeddingFastembedModel as string) || prev.embeddingFastembedModel,
+            embeddingUrl: (existing.embeddingUrl as string) || '',
+            embeddingModel: (existing.embeddingModel as string) || '',
+            embeddingApiKey: '', // redacted — never sent back
+            embeddingDimensions: (existing.embeddingDimensions as number) || prev.embeddingDimensions,
             // Reconfigure indicators
             hasOidcSecret: (existing.hasOidcSecret as boolean) || false,
             hasNeo4jPassword: (existing.hasNeo4jPassword as boolean) || false,
             hasMeilisearchKey: (existing.hasMeilisearchKey as boolean) || false,
+            hasEmbeddingApiKey: (existing.hasEmbeddingApiKey as boolean) || false,
           }))
         }
       } catch (err) {

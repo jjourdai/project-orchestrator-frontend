@@ -125,10 +125,25 @@ export interface SetupConfig {
   mcpSetupStatus: McpSetupStatus
   mcpSetupMessage: string
 
+  // Step 3b — Desktop-only settings (PATH, CLI, auto-update)
+  chatProcessPath: string
+  chatClaudeCliPath: string
+  chatAutoUpdateCli: boolean
+  chatAutoUpdateApp: boolean
+
+  // Step 3c — Embedding provider
+  embeddingProvider: 'local' | 'http' | 'disabled'
+  embeddingFastembedModel: string
+  embeddingUrl: string
+  embeddingModel: string
+  embeddingApiKey: string
+  embeddingDimensions: number
+
   // Reconfigure mode indicators (read-only, set by read_config)
   hasOidcSecret: boolean
   hasNeo4jPassword: boolean
   hasMeilisearchKey: boolean
+  hasEmbeddingApiKey: boolean
 }
 
 export const defaultSetupConfig: SetupConfig = {
@@ -173,10 +188,25 @@ export const defaultSetupConfig: SetupConfig = {
   mcpSetupStatus: 'idle' as McpSetupStatus,
   mcpSetupMessage: '',
 
+  // Desktop-only settings
+  chatProcessPath: '',
+  chatClaudeCliPath: '',
+  chatAutoUpdateCli: false,
+  chatAutoUpdateApp: true,
+
+  // Embedding provider
+  embeddingProvider: 'local',
+  embeddingFastembedModel: 'multilingual-e5-base',
+  embeddingUrl: '',
+  embeddingModel: '',
+  embeddingApiKey: '',
+  embeddingDimensions: 768,
+
   // Reconfigure mode indicators
   hasOidcSecret: false,
   hasNeo4jPassword: false,
   hasMeilisearchKey: false,
+  hasEmbeddingApiKey: false,
 }
 
 /** The full wizard configuration, shared across all setup steps */
@@ -213,3 +243,9 @@ export const trayNavigationAtom = atom<boolean>(
  *  /projects?from=tray but the backend wasn't configured yet, SetupGuard
  *  saves '/projects' here before redirecting to /setup. */
 export const trayReturnUrlAtom = atom<string | null>(null)
+
+/** URL to return to when leaving the Settings page.
+ *  Set by UserMenu (via Jotai) or by the tray (via sessionStorage).
+ *  SettingsPage reads this to navigate back instead of using navigate(-1),
+ *  which fails when the page was opened from the tray (no browser history). */
+export const settingsReturnUrlAtom = atom<string | null>(null)
