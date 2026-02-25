@@ -246,9 +246,16 @@ function CallGraphNode({ item, direction }: { item: Record<string, unknown>; dir
   )
 }
 
+/** Normalize call graph items: strings → { name: string }, objects pass through */
+function normalizeCallGraphItems(raw: unknown[]): Record<string, unknown>[] {
+  return raw.map((item) =>
+    typeof item === 'string' ? { name: item } : (item as Record<string, unknown>),
+  )
+}
+
 function CallGraph({ data }: { data: Record<string, unknown> }) {
-  const callers = (data.callers ?? data.called_by ?? []) as Record<string, unknown>[]
-  const callees = (data.callees ?? data.calls ?? []) as Record<string, unknown>[]
+  const callers = normalizeCallGraphItems((data.callers ?? data.called_by ?? []) as unknown[])
+  const callees = normalizeCallGraphItems((data.callees ?? data.calls ?? []) as unknown[])
 
   return (
     <McpContainer>
@@ -500,6 +507,10 @@ const CODE_RENDERERS: Record<string, React.ComponentType<{ data: unknown }>> = {
   find_type_traits: ({ data }) => <SymbolList data={data} label="Traits" />,
   get_impl_blocks: ({ data }) => <SymbolList data={data} label="Impl blocks" />,
   get_file_dependencies: ({ data }) => <FileDependencies data={(data ?? {}) as Record<string, unknown>} />,
+  // GDS tools — use generic architecture view as fallback
+  get_code_communities: ({ data }) => <Architecture data={(data ?? {}) as Record<string, unknown>} />,
+  get_code_health: ({ data }) => <Architecture data={(data ?? {}) as Record<string, unknown>} />,
+  get_node_importance: ({ data }) => <ImpactAnalysis data={(data ?? {}) as Record<string, unknown>} />,
 }
 
 export function CodeRenderer({ action, parsed }: { action: string; parsed: unknown; toolInput?: Record<string, unknown> }) {

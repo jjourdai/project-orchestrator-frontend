@@ -7,21 +7,27 @@
 
 /* eslint-disable react-refresh/only-export-components */
 
-import { Link } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
+import { workspacePath } from '@/utils/paths'
 
 // ---------------------------------------------------------------------------
-// Entity quick-link — maps entity types to frontend routes
+// Entity quick-link — maps entity types to workspace-scoped frontend routes
 // ---------------------------------------------------------------------------
 
-const ENTITY_ROUTES: Record<string, (id: string) => string> = {
-  plan: (id) => `/plans/${id}`,
-  task: (id) => `/tasks/${id}`,
-  project: (slug) => `/projects/${slug}`,
-  milestone: (id) => `/milestones/${id}`,
-  project_milestone: (id) => `/project-milestones/${id}`,
-  workspace: (slug) => `/workspaces/${slug}`,
-  release: (id) => `/plans/${id}`, // no dedicated page, link to parent
-  note: () => `/notes`,
+/** Build a workspace-scoped path, falling back to flat path if no workspace */
+function wsRoute(wsSlug: string | undefined, path: string): string {
+  return wsSlug ? workspacePath(wsSlug, path) : path
+}
+
+const ENTITY_ROUTES: Record<string, (wsSlug: string | undefined, id: string) => string> = {
+  plan: (ws, id) => wsRoute(ws, `/plans/${id}`),
+  task: (ws, id) => wsRoute(ws, `/tasks/${id}`),
+  project: (ws, slug) => wsRoute(ws, `/projects/${slug}`),
+  milestone: (ws, id) => wsRoute(ws, `/milestones/${id}`),
+  project_milestone: (ws, id) => wsRoute(ws, `/project-milestones/${id}`),
+  workspace: (_ws, slug) => `/workspace/${slug}`,
+  release: (ws, id) => wsRoute(ws, `/plans/${id}`), // no dedicated page, link to parent plan
+  note: (ws) => wsRoute(ws, `/notes`),
 }
 
 export function EntityLink({ entityType, id, children }: {
@@ -29,11 +35,12 @@ export function EntityLink({ entityType, id, children }: {
   id: string
   children: React.ReactNode
 }) {
+  const { slug: wsSlug } = useParams<{ slug: string }>()
   const routeFn = ENTITY_ROUTES[entityType]
   if (!routeFn || !id) return <>{children}</>
   return (
     <Link
-      to={routeFn(id)}
+      to={routeFn(wsSlug, id)}
       className="hover:text-indigo-400 hover:underline decoration-indigo-400/30 underline-offset-2 transition-colors"
     >
       {children}
@@ -254,16 +261,61 @@ export function ErrorDisplay({ content }: { content: string }) {
 }
 
 // ---------------------------------------------------------------------------
-// Parse JSON result safely
+// Parse tool result — handles JSON, MCP content-block arrays, compact YAML
 // ---------------------------------------------------------------------------
+
+/**
+ * Unwrap MCP content-block array if present.
+ *
+ * When tool results come through the Claude CLI as `ContentValue::Structured`,
+ * the backend serializes them as `[{ "type": "text", "text": "..." }, ...]`.
+ * The frontend's useChat.ts then JSON.stringify's this array into the block's
+ * `content` field. After JSON.parse we get the array back — we need to extract
+ * the actual text and re-parse it (JSON or compact YAML).
+ *
+ * Returns the extracted text if the value is a content-block array, otherwise
+ * returns `null` to signal no unwrapping was needed.
+ */
+function unwrapContentBlocks(val: unknown): string | null {
+  if (!Array.isArray(val)) return null
+
+  // Must contain at least one {type: "text", text: string} block
+  const textBlocks = val.filter(
+    (b): b is { type: string; text: string } =>
+      b != null && typeof b === 'object' && 'type' in b && b.type === 'text' && typeof (b as Record<string, unknown>).text === 'string',
+  )
+  if (textBlocks.length === 0) return null
+
+  return textBlocks.length === 1
+    ? textBlocks[0].text
+    : textBlocks.map((b) => b.text).join('\n')
+}
 
 export function parseResult(content: string | undefined): unknown {
   if (!content) return null
+
+  // Try JSON first (fastest path)
   try {
-    return JSON.parse(content)
+    const json = JSON.parse(content)
+
+    // Check if the JSON is an MCP content-block array: [{type:"text", text:"..."}]
+    const innerText = unwrapContentBlocks(json)
+    if (innerText !== null) {
+      // Re-parse the unwrapped text (could be JSON data or compact YAML)
+      try {
+        return JSON.parse(innerText)
+      } catch {
+        // Not JSON inside — try compact YAML
+      }
+      return parseCompactYaml(innerText) ?? json
+    }
+
+    return json
   } catch {
-    return null
+    // Not JSON — try compact YAML (from backend's json_to_compact formatter)
   }
+
+  return parseCompactYaml(content)
 }
 
 // ---------------------------------------------------------------------------
@@ -433,6 +485,7 @@ export function highlightSearchTerms(text: string, query: string | undefined | n
 // ---------------------------------------------------------------------------
 
 import { useState } from 'react'
+import { parseCompactYaml } from '@/utils/compactYamlParser'
 
 /**
  * Collapsible list: shows first `limit` items, with expand toggle.
