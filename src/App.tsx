@@ -27,7 +27,13 @@ import {
   TaskDetailPage,
   NotesPage,
   CodePage,
+  DecisionsPage,
+  DecisionDetailPage,
+  SkillsPage,
+  SkillDetailPage,
+  FeatureGraphsPage,
   FeatureGraphDetailPage,
+  AdminPage,
   NotFoundPage,
   SettingsPage,
   SetupWizard,
@@ -148,8 +154,14 @@ function App() {
                         <Route path="tasks" element={<TasksPage />} />
                         <Route path="tasks/:taskId" element={<TaskDetailPage />} />
                         <Route path="notes" element={<NotesPage />} />
+                        <Route path="decisions" element={<DecisionsPage />} />
+                        <Route path="decisions/:decisionId" element={<DecisionDetailPage />} />
                         <Route path="code" element={<CodePage />} />
+                        <Route path="skills" element={<SkillsPage />} />
+                        <Route path="skills/:id" element={<SkillDetailPage />} />
+                        <Route path="feature-graphs" element={<FeatureGraphsPage />} />
                         <Route path="feature-graphs/:id" element={<FeatureGraphDetailPage />} />
+                        <Route path="admin" element={<AdminPage />} />
                         <Route path="*" element={<NotFoundPage embedded />} />
                       </Route>
                     </Route>

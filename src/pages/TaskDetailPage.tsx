@@ -1,15 +1,16 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, Link, useLocation } from 'react-router-dom'
 import { useAtomValue } from 'jotai'
-import { ClipboardList, FolderKanban } from 'lucide-react'
-import { Card, CardHeader, CardTitle, CardContent, LoadingPage, ErrorState, Badge, Button, ConfirmDialog, FormDialog, LinkEntityDialog, TaskStatusBadge, InteractiveStepStatusBadge, ProgressBar, PageHeader, StatusSelect, SectionNav } from '@/components/ui'
+import { ClipboardList, FolderKanban, GitCommitHorizontal } from 'lucide-react'
+import { Card, CardHeader, CardTitle, CardContent, LoadingPage, ErrorState, Badge, Button, ConfirmDialog, FormDialog, LinkEntityDialog, TaskStatusBadge, InteractiveStepStatusBadge, InteractiveDecisionStatusBadge, ProgressBar, PageHeader, StatusSelect, SectionNav } from '@/components/ui'
 import type { ParentLink } from '@/components/ui/PageHeader'
-import { tasksApi, plansApi, projectsApi } from '@/services'
+import { tasksApi, plansApi, projectsApi, decisionsApi } from '@/services'
 import { useConfirmDialog, useFormDialog, useLinkDialog, useToast, useSectionObserver, useWorkspaceSlug, useViewTransition } from '@/hooks'
 import { workspacePath } from '@/utils/paths'
 import { taskRefreshAtom, projectRefreshAtom, planRefreshAtom } from '@/atoms'
 import { CreateStepForm, CreateDecisionForm } from '@/components/forms'
-import type { Task, Step, Decision, Commit, TaskStatus, StepStatus, Project } from '@/types'
+import { CommitList } from '@/components/commits'
+import type { Task, Step, Decision, Commit, TaskStatus, StepStatus, DecisionStatus, Project } from '@/types'
 
 // The API response structure
 interface TaskApiResponse {
@@ -37,6 +38,7 @@ export function TaskDetailPage() {
   const confirmDialog = useConfirmDialog()
   const stepFormDialog = useFormDialog()
   const decisionFormDialog = useFormDialog()
+  const commitFormDialog = useFormDialog()
   const linkDialog = useLinkDialog()
   const toast = useToast()
   const taskRefresh = useAtomValue(taskRefreshAtom)
@@ -48,6 +50,7 @@ export function TaskDetailPage() {
   const [blockers, setBlockers] = useState<Task[]>([])
   const [blocking, setBlocking] = useState<Task[]>([])
   const [commits, setCommits] = useState<Commit[]>([])
+  const [commitShaInput, setCommitShaInput] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -163,7 +166,29 @@ export function TaskDetailPage() {
     },
   })
 
-  const sectionIds = ['steps', 'dependencies', 'decisions']
+  const handleDecisionStatusChange = async (decision: Decision, newStatus: DecisionStatus) => {
+    try {
+      await decisionsApi.update(decision.id, { status: newStatus })
+      setDecisions((prev) => prev.map((d) => (d.id === decision.id ? { ...d, status: newStatus } : d)))
+      toast.success(`Decision status → ${newStatus}`)
+    } catch {
+      toast.error('Failed to update decision status')
+    }
+  }
+
+  const handleDeleteDecision = (decision: Decision) => {
+    confirmDialog.open({
+      title: 'Delete Decision',
+      description: 'Permanently delete this decision? This cannot be undone.',
+      onConfirm: async () => {
+        await decisionsApi.delete(decision.id)
+        setDecisions((prev) => prev.filter((d) => d.id !== decision.id))
+        toast.success('Decision deleted')
+      },
+    })
+  }
+
+  const sectionIds = ['steps', 'dependencies', 'decisions', 'commits']
   const activeSection = useSectionObserver(sectionIds)
 
   if (error) return <ErrorState title="Failed to load" description={error} onRetry={fetchData} />
@@ -181,6 +206,7 @@ export function TaskDetailPage() {
     { id: 'steps', label: 'Steps', count: steps.length },
     { id: 'dependencies', label: 'Dependencies', count: blockers.length + blocking.length },
     { id: 'decisions', label: 'Decisions', count: decisions.length },
+    { id: 'commits', label: 'Commits', count: commits.length },
   ]
 
   // Build parent links for navigation
@@ -416,18 +442,22 @@ export function TaskDetailPage() {
       <section id="decisions" className="scroll-mt-20">
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle>Decisions ({decisions.length})</CardTitle>
-            <Button size="sm" onClick={() => decisionFormDialog.open({ title: 'Add Decision', size: 'lg' })}>Add Decision</Button>
-          </div>
+          <CardTitle>Decisions ({decisions.length})</CardTitle>
+          <Button size="sm" onClick={() => decisionFormDialog.open({ title: 'Add Decision', size: 'lg' })}>Add Decision</Button>
         </CardHeader>
         <CardContent>
           {decisions.length === 0 ? (
             <p className="text-gray-500 text-sm">No decisions recorded</p>
           ) : (
-            <div className="space-y-3">
-              {decisions.map((decision, index) => (
-                <DecisionRow key={decision.id || index} decision={decision} />
+            <div className="space-y-2">
+              {decisions.map((decision) => (
+                <DecisionRow
+                  key={decision.id}
+                  decision={decision}
+                  wsSlug={wsSlug}
+                  onStatusChange={(status) => handleDecisionStatusChange(decision, status)}
+                  onDelete={() => handleDeleteDecision(decision)}
+                />
               ))}
             </div>
           )}
@@ -455,33 +485,63 @@ export function TaskDetailPage() {
       )}
 
       {/* Commits */}
-      {commits.length > 0 && (
-        <section id="commits" className="scroll-mt-20">
-        <Card>
-          <CardHeader>
-            <CardTitle>Commits ({commits.length})</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              {commits.map((commit) => (
-                <div key={commit.sha} className="p-2 bg-white/[0.06] rounded">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="font-mono text-xs text-indigo-400 shrink-0">{commit.sha.slice(0, 7)}</span>
-                    <span className="text-gray-200 truncate min-w-0">{commit.message}</span>
-                  </div>
-                </div>
-              ))}
+      <section id="commits" className="scroll-mt-20">
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between w-full">
+            <div className="flex items-center gap-2">
+              <GitCommitHorizontal className="w-4 h-4 text-gray-500" />
+              <CardTitle>Commits ({commits.length})</CardTitle>
             </div>
-          </CardContent>
-        </Card>
-        </section>
-      )}
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => { setCommitShaInput(''); commitFormDialog.open({ title: 'Link Commit', submitLabel: 'Link', size: 'sm' }) }}
+            >
+              Link Commit
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {commits.length > 0 ? (
+            <CommitList commits={commits} />
+          ) : (
+            <p className="text-sm text-gray-500 py-4 text-center">No commits linked to this task yet</p>
+          )}
+        </CardContent>
+      </Card>
+      </section>
 
       <FormDialog {...stepFormDialog.dialogProps} onSubmit={stepForm.submit}>
         {stepForm.fields}
       </FormDialog>
       <FormDialog {...decisionFormDialog.dialogProps} onSubmit={decisionForm.submit}>
         {decisionForm.fields}
+      </FormDialog>
+      <FormDialog
+        {...commitFormDialog.dialogProps}
+        onSubmit={async () => {
+          const sha = commitShaInput.trim()
+          if (!sha || !taskId) return false
+          await tasksApi.linkCommit(taskId, sha)
+          toast.success('Commit linked')
+          setCommitShaInput('')
+          fetchData()
+        }}
+      >
+        <div className="space-y-3">
+          <label className="block text-sm font-medium text-gray-300">Commit SHA</label>
+          <input
+            type="text"
+            value={commitShaInput}
+            onChange={(e) => setCommitShaInput(e.target.value)}
+            placeholder="e.g. a1b2c3d or full 40-char SHA"
+            pattern="[a-f0-9]{7,40}"
+            className="w-full px-3 py-2 bg-white/[0.06] border border-white/[0.08] rounded-lg text-sm text-gray-200 placeholder:text-gray-500 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500/50 focus:border-indigo-500/50"
+            autoFocus
+          />
+          <p className="text-xs text-gray-500">Enter a 7–40 character hex commit hash to link to this task.</p>
+        </div>
       </FormDialog>
       <LinkEntityDialog {...linkDialog.dialogProps} />
       <ConfirmDialog {...confirmDialog.dialogProps} />
@@ -533,20 +593,52 @@ function StepRow({
   )
 }
 
-function DecisionRow({ decision }: { decision: Decision }) {
+interface DecisionRowProps {
+  decision: Decision
+  wsSlug: string
+  onStatusChange: (status: DecisionStatus) => Promise<void>
+  onDelete: () => void
+}
+
+function DecisionRow({ decision, wsSlug, onStatusChange, onDelete }: DecisionRowProps) {
   const alternatives = decision.alternatives || []
   return (
-    <div className="p-3 bg-white/[0.06] rounded-lg overflow-hidden">
-      <p className="font-medium text-gray-200 mb-1 break-words">{decision.description}</p>
-      <p className="text-sm text-gray-400 mb-2 break-words">{decision.rationale}</p>
-      {alternatives.length > 0 && (
-        <div className="text-xs text-gray-500 mb-2">
-          Alternatives: {alternatives.join(', ')}
+    <Link
+      to={workspacePath(wsSlug, `/decisions/${decision.id}`)}
+      className="block p-3 bg-white/[0.06] rounded-lg overflow-hidden hover:bg-white/[0.09] transition-colors group/dec"
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <p className="font-medium text-gray-200 mb-1 break-words line-clamp-2">{decision.description}</p>
+          {decision.rationale && (
+            <p className="text-sm text-gray-400 mb-2 break-words line-clamp-2">{decision.rationale}</p>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {decision.chosen_option && (
+              <Badge variant="success">Chosen: {decision.chosen_option}</Badge>
+            )}
+            {alternatives.length > 0 && (
+              <span className="text-xs text-gray-500">
+                {alternatives.length} alternative{alternatives.length > 1 ? 's' : ''}
+              </span>
+            )}
+          </div>
         </div>
-      )}
-      {decision.chosen_option && (
-        <Badge variant="success">Chosen: {decision.chosen_option}</Badge>
-      )}
-    </div>
+        <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.preventDefault()}>
+          <InteractiveDecisionStatusBadge status={decision.status} onStatusChange={onStatusChange} />
+          <button
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              onDelete()
+            }}
+            className="p-1 rounded text-gray-600 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover/dec:opacity-100 transition-all"
+            title="Delete decision"
+          >
+            &times;
+          </button>
+        </div>
+      </div>
+    </Link>
   )
 }

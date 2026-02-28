@@ -1,17 +1,18 @@
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useSetAtom, useAtomValue } from 'jotai'
-import { ChevronsUpDown, ChevronRight, Flag } from 'lucide-react'
-import { Card, CardHeader, CardTitle, CardContent, LoadingPage, ErrorState, Badge, Button, ConfirmDialog, FormDialog, LinkEntityDialog, LinkedEntityBadge, InteractiveTaskStatusBadge, ViewToggle, PageHeader, StatusSelect, SectionNav } from '@/components/ui'
+import { ChevronsUpDown, ChevronRight, Flag, FolderKanban, GitCommitHorizontal } from 'lucide-react'
+import { Card, CardHeader, CardTitle, CardContent, LoadingPage, ErrorState, Badge, Button, ConfirmDialog, FormDialog, LinkEntityDialog, LinkedEntityBadge, InteractiveTaskStatusBadge, InteractiveDecisionStatusBadge, ViewToggle, PageHeader, StatusSelect, SectionNav } from '@/components/ui'
 import type { ParentLink } from '@/components/ui/PageHeader'
-import { plansApi, tasksApi, projectsApi, workspacesApi } from '@/services'
+import { plansApi, tasksApi, projectsApi, workspacesApi, decisionsApi } from '@/services'
 import { KanbanBoard } from '@/components/kanban'
 import { useViewMode, useConfirmDialog, useFormDialog, useLinkDialog, useToast, useSectionObserver, useWorkspaceSlug, useViewTransition } from '@/hooks'
 import { workspacePath } from '@/utils/paths'
 import { chatSuggestedProjectIdAtom, planRefreshAtom, taskRefreshAtom, projectRefreshAtom } from '@/atoms'
 import { CreateTaskForm, CreateConstraintForm } from '@/components/forms'
 import { DependencyGraphView } from '@/components/DependencyGraphView'
-import type { Plan, Decision, DependencyGraph, Task, Constraint, Step, PlanStatus, TaskStatus, StepStatus, PaginatedResponse, Project } from '@/types'
+import { CommitList } from '@/components/commits'
+import type { Plan, Decision, DecisionStatus, DependencyGraph, Task, Constraint, Step, Commit, PlanStatus, TaskStatus, StepStatus, PaginatedResponse, Project } from '@/types'
 import type { KanbanTask } from '@/components/kanban'
 
 interface DecisionWithTask extends Decision {
@@ -27,6 +28,8 @@ export function PlanDetailPage() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [constraints, setConstraints] = useState<Constraint[]>([])
   const [decisions, setDecisions] = useState<DecisionWithTask[]>([])
+  const [commits, setCommits] = useState<Commit[]>([])
+  const [commitShaInput, setCommitShaInput] = useState('')
   const [graph, setGraph] = useState<DependencyGraph | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -34,6 +37,7 @@ export function PlanDetailPage() {
   const confirmDialog = useConfirmDialog()
   const taskFormDialog = useFormDialog()
   const constraintFormDialog = useFormDialog()
+  const commitFormDialog = useFormDialog()
   const linkDialog = useLinkDialog()
   const toast = useToast()
   const setSuggestedProjectId = useSetAtom(chatSuggestedProjectIdAtom)
@@ -44,7 +48,7 @@ export function PlanDetailPage() {
   const [tasksExpandAll, setTasksExpandAll] = useState(0)
   const [tasksCollapseAll, setTasksCollapseAll] = useState(0)
   const [tasksAllExpanded, setTasksAllExpanded] = useState(false)
-  const [linkedMilestones, setLinkedMilestones] = useState<Array<{ id: string; title: string; href: string }>>([])
+  const [linkedMilestones, setLinkedMilestones] = useState<Array<{ id: string; title: string; href: string; type: 'workspace' | 'project' }>>([])
 
   const fetchData = useCallback(async () => {
     if (!planId) return
@@ -53,17 +57,19 @@ export function PlanDetailPage() {
     const isInitialLoad = !plan
     if (isInitialLoad) setLoading(true)
     try {
-      const [planResponse, tasksData, constraintsData, graphData] = await Promise.all([
+      const [planResponse, tasksData, constraintsData, graphData, commitsData] = await Promise.all([
         plansApi.get(planId),
         tasksApi.list({ plan_id: planId, limit: 100 }),
         plansApi.listConstraints(planId),
         plansApi.getDependencyGraph(planId).catch(() => null),
+        plansApi.getCommits(planId).catch(() => ({ items: [] })),
       ])
       const planData = (planResponse as unknown as { plan: Plan }).plan || planResponse
       setPlan(planData)
       setTasks(tasksData.items || [])
       setConstraints(Array.isArray(constraintsData) ? constraintsData : [])
       setGraph(graphData)
+      setCommits(commitsData.items || [])
 
       // Extract decisions from PlanDetails response — backend nests them in tasks[].decisions[]
       const rawTasks = (planResponse as unknown as { tasks?: { task?: Task; decisions?: Decision[] }[] }).tasks || []
@@ -101,19 +107,20 @@ export function PlanDetailPage() {
     fetchData()
   }, [fetchData])
 
-  // Resolve linked milestones (workspace milestones that reference this plan)
+  // Resolve linked milestones (workspace + project milestones that reference this plan)
   useEffect(() => {
     if (!planId) return
     const controller = new AbortController()
 
     async function resolveMilestones() {
-      const milestones: Array<{ id: string; title: string; href: string }> = []
+      const milestones: Array<{ id: string; title: string; href: string; type: 'workspace' | 'project' }> = []
       try {
+        // 1. Workspace milestones
         const wsMilestones = await workspacesApi.listMilestones(wsSlug, { limit: 100 })
-        const details = await Promise.allSettled(
+        const wsDetails = await Promise.allSettled(
           (wsMilestones.items || []).map((ms) => workspacesApi.getMilestone(ms.id))
         )
-        for (const result of details) {
+        for (const result of wsDetails) {
           if (result.status === 'fulfilled') {
             const detail = result.value
             if (Array.isArray(detail.plans) && detail.plans.some((p) => p.id === planId)) {
@@ -121,8 +128,34 @@ export function PlanDetailPage() {
                 id: detail.id,
                 title: detail.title,
                 href: workspacePath(wsSlug, `/milestones/${detail.id}`),
+                type: 'workspace',
               })
             }
+          }
+        }
+
+        // 2. Project milestones (if the plan is linked to a project)
+        if (plan?.project_id) {
+          try {
+            const projMilestones = await projectsApi.listMilestones(plan.project_id, { limit: 100 })
+            const projDetails = await Promise.allSettled(
+              (projMilestones.items || []).map((ms) => projectsApi.getMilestone(ms.id))
+            )
+            for (const result of projDetails) {
+              if (result.status === 'fulfilled') {
+                const detail = result.value
+                if (Array.isArray(detail.plans) && detail.plans.some((p) => p.id === planId)) {
+                  milestones.push({
+                    id: detail.milestone.id,
+                    title: detail.milestone.title,
+                    href: workspacePath(wsSlug, `/project-milestones/${detail.milestone.id}`),
+                    type: 'project',
+                  })
+                }
+              }
+            }
+          } catch {
+            /* graceful degradation */
           }
         }
       } catch {
@@ -135,8 +168,8 @@ export function PlanDetailPage() {
 
     resolveMilestones()
     return () => controller.abort()
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- planId and wsSlug are stable URL params
-  }, [planId, wsSlug])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- planId, wsSlug and plan?.project_id are stable
+  }, [planId, wsSlug, plan?.project_id])
 
   const handleTaskStatusChange = useCallback(
     async (taskId: string, newStatus: TaskStatus) => {
@@ -183,7 +216,29 @@ export function PlanDetailPage() {
     },
   })
 
-  const sectionIds = ['overview', 'tasks', 'constraints', 'decisions', ...(graph && (graph.nodes || []).length > 0 ? ['graph'] : [])]
+  const handleDecisionStatusChange = async (decision: DecisionWithTask, newStatus: DecisionStatus) => {
+    try {
+      await decisionsApi.update(decision.id, { status: newStatus })
+      setDecisions((prev) => prev.map((d) => (d.id === decision.id ? { ...d, status: newStatus } : d)))
+      toast.success(`Decision status → ${newStatus}`)
+    } catch {
+      toast.error('Failed to update decision status')
+    }
+  }
+
+  const handleDeleteDecision = (decision: DecisionWithTask) => {
+    confirmDialog.open({
+      title: 'Delete Decision',
+      description: 'Permanently delete this decision? This cannot be undone.',
+      onConfirm: async () => {
+        await decisionsApi.delete(decision.id)
+        setDecisions((prev) => prev.filter((d) => d.id !== decision.id))
+        toast.success('Decision deleted')
+      },
+    })
+  }
+
+  const sectionIds = ['overview', 'tasks', 'constraints', 'decisions', 'commits', ...(graph && (graph.nodes || []).length > 0 ? ['graph'] : [])]
   const activeSection = useSectionObserver(sectionIds)
 
   // Build a fresh status map from local tasks state (includes optimistic updates)
@@ -209,13 +264,14 @@ export function PlanDetailPage() {
     { id: 'tasks', label: 'Tasks', count: tasks.length },
     { id: 'constraints', label: 'Constraints', count: constraints.length },
     { id: 'decisions', label: 'Decisions', count: decisions.length },
+    { id: 'commits', label: 'Commits', count: commits.length },
     ...(graph && (graph.nodes || []).length > 0 ? [{ id: 'graph', label: 'Graph', count: (graph.nodes || []).length }] : []),
   ]
 
   // Build parent links for milestone navigation
   const parentLinks: ParentLink[] = linkedMilestones.map((ms) => ({
-    icon: Flag,
-    label: 'Milestone',
+    icon: ms.type === 'project' ? FolderKanban : Flag,
+    label: ms.type === 'project' ? 'Project Milestone' : 'Milestone',
     name: ms.title,
     href: ms.href,
   }))
@@ -410,26 +466,46 @@ export function PlanDetailPage() {
             {decisions.length === 0 ? (
               <p className="text-gray-500 text-sm">No decisions recorded</p>
             ) : (
-              <div className="space-y-3">
+              <div className="space-y-2">
                 {decisions.map((decision) => (
-                  <div key={decision.id} className="p-3 bg-white/[0.06] rounded-lg overflow-hidden">
-                    <div className="flex items-center gap-2 mb-1">
-                      <p className="font-medium text-gray-200 break-words min-w-0">{decision.description}</p>
+                  <Link
+                    key={decision.id}
+                    to={workspacePath(wsSlug, `/decisions/${decision.id}`)}
+                    className="block p-3 bg-white/[0.06] rounded-lg overflow-hidden hover:bg-white/[0.09] transition-colors group/dec"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium text-gray-200 break-words line-clamp-2 mb-1">{decision.description}</p>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {decision.chosen_option && (
+                            <Badge variant="success">{decision.chosen_option}</Badge>
+                          )}
+                          <Link
+                            to={workspacePath(wsSlug, `/tasks/${decision.taskId}`)}
+                            state={{ planId: plan.id, planTitle: plan.title, projectId: plan.project_id }}
+                            className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            ← {decision.taskTitle}
+                          </Link>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.preventDefault()}>
+                        <InteractiveDecisionStatusBadge status={decision.status} onStatusChange={(status) => handleDecisionStatusChange(decision, status)} />
+                        <button
+                          onClick={(e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            handleDeleteDecision(decision)
+                          }}
+                          className="p-1 rounded text-gray-600 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover/dec:opacity-100 transition-all"
+                          title="Delete decision"
+                        >
+                          &times;
+                        </button>
+                      </div>
                     </div>
-                    <p className="text-sm text-gray-400 break-words">{decision.rationale}</p>
-                    <div className="flex items-center gap-2 mt-2 flex-wrap">
-                      {decision.chosen_option && (
-                        <Badge variant="success">{decision.chosen_option}</Badge>
-                      )}
-                      <Link
-                        to={workspacePath(wsSlug, `/tasks/${decision.taskId}`)}
-                        state={{ planId: plan.id, planTitle: plan.title, projectId: plan.project_id }}
-                        className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
-                      >
-                        ← {decision.taskTitle}
-                      </Link>
-                    </div>
-                  </div>
+                  </Link>
                 ))}
               </div>
             )}
@@ -437,6 +513,34 @@ export function PlanDetailPage() {
         </Card>
         </section>
       </div>
+
+      {/* Commits */}
+      <section id="commits" className="scroll-mt-20">
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between w-full">
+            <div className="flex items-center gap-2">
+              <GitCommitHorizontal className="w-4 h-4 text-gray-500" />
+              <CardTitle>Commits ({commits.length})</CardTitle>
+            </div>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => { setCommitShaInput(''); commitFormDialog.open({ title: 'Link Commit', submitLabel: 'Link', size: 'sm' }) }}
+            >
+              Link Commit
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {commits.length > 0 ? (
+            <CommitList commits={commits} />
+          ) : (
+            <p className="text-sm text-gray-500 py-4 text-center">No commits linked to this plan yet</p>
+          )}
+        </CardContent>
+      </Card>
+      </section>
 
       {/* Dependency Graph */}
       {graph && (graph.nodes || []).length > 0 && (
@@ -462,6 +566,31 @@ export function PlanDetailPage() {
       </FormDialog>
       <FormDialog {...constraintFormDialog.dialogProps} onSubmit={constraintForm.submit}>
         {constraintForm.fields}
+      </FormDialog>
+      <FormDialog
+        {...commitFormDialog.dialogProps}
+        onSubmit={async () => {
+          const sha = commitShaInput.trim()
+          if (!sha || !planId) return false
+          await plansApi.linkCommit(planId, sha)
+          toast.success('Commit linked')
+          setCommitShaInput('')
+          fetchData()
+        }}
+      >
+        <div className="space-y-3">
+          <label className="block text-sm font-medium text-gray-300">Commit SHA</label>
+          <input
+            type="text"
+            value={commitShaInput}
+            onChange={(e) => setCommitShaInput(e.target.value)}
+            placeholder="e.g. a1b2c3d or full 40-char SHA"
+            pattern="[a-f0-9]{7,40}"
+            className="w-full px-3 py-2 bg-white/[0.06] border border-white/[0.08] rounded-lg text-sm text-gray-200 placeholder:text-gray-500 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500/50 focus:border-indigo-500/50"
+            autoFocus
+          />
+          <p className="text-xs text-gray-500">Enter a 7–40 character hex commit hash to link to this plan.</p>
+        </div>
       </FormDialog>
       <LinkEntityDialog {...linkDialog.dialogProps} />
       <ConfirmDialog {...confirmDialog.dialogProps} />

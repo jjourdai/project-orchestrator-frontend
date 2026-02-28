@@ -13,6 +13,10 @@ export {
   InteractiveTaskStatusBadge,
   InteractiveNoteStatusBadge,
   InteractiveStepStatusBadge,
+  SkillStatusBadge,
+  InteractiveSkillStatusBadge,
+  DecisionStatusBadge,
+  InteractiveDecisionStatusBadge,
 } from './Badge'
 export { Card, CardHeader, CardTitle, CardContent, CardFooter } from './Card'
 export { Input, SearchInput } from './Input'
@@ -26,6 +30,8 @@ export { Pagination } from './Pagination'
 export { LoadMoreSentinel } from './LoadMoreSentinel'
 export { ViewToggle } from './ViewToggle'
 export { CollapsibleMarkdown } from './CollapsibleMarkdown'
+export { Dialog } from './Dialog'
+export type { DialogProps } from './Dialog'
 export { ConfirmDialog } from './ConfirmDialog'
 export type { ConfirmDialogProps } from './ConfirmDialog'
 export { FormDialog } from './FormDialog'
