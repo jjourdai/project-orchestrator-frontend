@@ -12,7 +12,7 @@
 // T5.3 Steps 1+2: Timeline + Sparklines
 // ============================================================================
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -27,6 +27,8 @@ import {
   Play,
   Pause,
   RotateCcw,
+  Box,
+  Grid2x2,
 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card'
 import { ErrorState } from '@/components/ui/ErrorState'
@@ -37,6 +39,10 @@ import { projectsApi } from '@/services/projects'
 import { useWorkspaceSlug } from '@/hooks'
 import { workspacePath } from '@/utils/paths'
 import type { Note, Skill, DecisionTimelineEntry } from '@/types'
+
+const ActivityHeatmap3D = lazy(() =>
+  import('./ActivityHeatmap3D').then((m) => ({ default: m.ActivityHeatmap3D })),
+)
 
 // ============================================================================
 // TYPES
@@ -669,6 +675,7 @@ export default function LearningTimeline(props: LearningTimelineProps) {
   const [playing, setPlaying] = useState(false)
   const [playbackPos, setPlaybackPos] = useState<number | null>(null) // 0–1
   const [playbackSpeed, setPlaybackSpeed] = useState(1) // 1x, 2x, 4x
+  const [heatmapMode, setHeatmapMode] = useState<'2d' | '3d'>('2d')
   const playbackRef = useRef<number | null>(null)
   const lastFrameRef = useRef<number>(0)
 
@@ -748,15 +755,45 @@ export default function LearningTimeline(props: LearningTimelineProps) {
       const projectData = await projectsApi.get(projectSlug)
       const projectId = projectData.id
 
+      // Paginate through all notes (backend max 100 per request)
+      const fetchAllNotes = async (): Promise<Note[]> => {
+        const all: Note[] = []
+        let offset = 0
+        const limit = 100
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const page = await notesApi.list({ project_id: projectId, limit, offset })
+          all.push(...page.items)
+          if (all.length >= page.total || page.items.length < limit) break
+          offset += limit
+        }
+        return all
+      }
+
+      // Paginate through all skills (backend max 100 per request)
+      const fetchAllSkills = async (): Promise<Skill[]> => {
+        const all: Skill[] = []
+        let offset = 0
+        const limit = 100
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const page = await skillsApi.list({ project_id: projectId, limit, offset })
+          all.push(...page.items)
+          if (all.length >= page.total || page.items.length < limit) break
+          offset += limit
+        }
+        return all
+      }
+
       const [notesRes, decisionsRes, skillsRes] = await Promise.allSettled([
-        notesApi.getProjectNotes(projectId),
+        fetchAllNotes(),
         decisionsApi.getTimeline({}),
-        skillsApi.list({ project_id: projectId, limit: 200 }),
+        fetchAllSkills(),
       ])
 
-      const notes = notesRes.status === 'fulfilled' ? notesRes.value.items : []
+      const notes = notesRes.status === 'fulfilled' ? notesRes.value : []
       const decisions = decisionsRes.status === 'fulfilled' ? decisionsRes.value : []
-      const skills = skillsRes.status === 'fulfilled' ? skillsRes.value.items : []
+      const skills = skillsRes.status === 'fulfilled' ? skillsRes.value : []
 
       const allEvents = buildEvents(notes, decisions, skills)
       setEvents(allEvents)
@@ -971,6 +1008,15 @@ export default function LearningTimeline(props: LearningTimelineProps) {
     return counts
   }, [filteredEvents])
 
+  // Padded min/max for the RangeSlider — must match the padding applied in fetchData
+  const sliderBounds = useMemo(() => {
+    if (events.length === 0) return { min: 0, max: 1 }
+    const minTs = events[0].date.getTime()
+    const maxTs = events[events.length - 1].date.getTime()
+    const padding = (maxTs - minTs) * 0.02 || 86400000
+    return { min: minTs - padding, max: maxTs + padding }
+  }, [events])
+
   // ── Loading / Error ─────────────────────────────────────────────────
   if (loading) {
     return (
@@ -989,7 +1035,7 @@ export default function LearningTimeline(props: LearningTimelineProps) {
   const endDate = new Date(dateRange.end)
 
   return (
-    <div className="py-6 space-y-5 max-w-6xl">
+    <div className="py-6 space-y-5 w-full">
       {/* ── Header (hidden in embedded mode) ─────────────────────────── */}
       {!props.embedded && (
         <div className="flex items-center justify-between">
@@ -1256,8 +1302,8 @@ export default function LearningTimeline(props: LearningTimelineProps) {
               <div>
                 <p className="text-[9px] text-slate-600 uppercase tracking-wider mb-1">Date Range</p>
                 <RangeSlider
-                  min={events[0].date.getTime()}
-                  max={events[events.length - 1].date.getTime()}
+                  min={sliderBounds.min}
+                  max={sliderBounds.max}
                   start={dateRange.start}
                   end={dateRange.end}
                   onChange={(s, e) => setDateRange({ start: s, end: e })}
@@ -1362,13 +1408,47 @@ export default function LearningTimeline(props: LearningTimelineProps) {
             <CardTitle className="flex items-center gap-2 text-sm">
               <TrendingUp size={16} className="text-emerald-400" />
               Activity Heatmap
-              <span className="text-[10px] text-slate-600 font-normal ml-auto">
-                Day × Hour
-              </span>
+              <div className="ml-auto flex items-center gap-1">
+                <button
+                  onClick={() => setHeatmapMode('2d')}
+                  className={`p-1 rounded transition-colors ${
+                    heatmapMode === '2d'
+                      ? 'bg-slate-700 text-cyan-400'
+                      : 'text-slate-600 hover:text-slate-400'
+                  }`}
+                  title="2D Grid"
+                >
+                  <Grid2x2 size={14} />
+                </button>
+                <button
+                  onClick={() => setHeatmapMode('3d')}
+                  className={`p-1 rounded transition-colors ${
+                    heatmapMode === '3d'
+                      ? 'bg-slate-700 text-cyan-400'
+                      : 'text-slate-600 hover:text-slate-400'
+                  }`}
+                  title="3D Scene"
+                >
+                  <Box size={14} />
+                </button>
+              </div>
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <ActivityHeatmap events={filteredEvents} color="#22d3ee" />
+            {heatmapMode === '2d' ? (
+              <ActivityHeatmap events={filteredEvents} color="#22d3ee" />
+            ) : (
+              <Suspense
+                fallback={
+                  <div className="flex items-center justify-center h-[360px] text-slate-600">
+                    <Loader2 size={20} className="animate-spin mr-2" />
+                    Loading 3D scene…
+                  </div>
+                }
+              >
+                <ActivityHeatmap3D events={filteredEvents} />
+              </Suspense>
+            )}
           </CardContent>
         </Card>
       )}
