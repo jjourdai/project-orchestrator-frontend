@@ -34,10 +34,12 @@ import {
   FeatureGraphsPage,
   FeatureGraphDetailPage,
   AdminPage,
+
   NotFoundPage,
   SettingsPage,
   SetupWizard,
 } from '@/pages'
+// Intelligence sub-views are now embedded inline in ProjectDetailPage (lazy-loaded there)
 
 /**
  * Captures the `?from=tray` query parameter on first render and stores
@@ -161,6 +163,8 @@ function App() {
                         <Route path="skills/:id" element={<SkillDetailPage />} />
                         <Route path="feature-graphs" element={<FeatureGraphsPage />} />
                         <Route path="feature-graphs/:id" element={<FeatureGraphDetailPage />} />
+                        {/* Intelligence sub-views are now embedded inline in ProjectDetailPage */}
+                        <Route path="projects/:projectSlug/intelligence" element={<ProjectDetailPage />} />
                         <Route path="admin" element={<AdminPage />} />
                         <Route path="*" element={<NotFoundPage embedded />} />
                       </Route>
