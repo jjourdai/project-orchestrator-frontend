@@ -39,8 +39,11 @@ export function ProjectSelect() {
       setProjects(items)
       setHasProjects(items.length > 0)
 
-      // Auto-select a project for cwd fallback (even in all-workspace mode)
-      if (!selectedProject && items.length > 0) {
+      // Check if current selectedProject belongs to this workspace
+      const currentStillValid = selectedProject && items.some((p) => p.id === selectedProject.id)
+
+      if (!currentStillValid && items.length > 0) {
+        // Selected project is from another workspace (or null) → reset to best match
         if (suggestedId) {
           const match = items.find((p) => p.id === suggestedId)
           if (match) {
@@ -50,6 +53,9 @@ export function ProjectSelect() {
           }
         }
         setSelectedProject(items[0])
+      } else if (!currentStillValid && items.length === 0) {
+        // New workspace has no projects → clear selection
+        setSelectedProject(null)
       }
       setLoading(false)
     }).catch(() => setLoading(false))

@@ -322,7 +322,10 @@ export function MainLayout() {
         {/* Page content */}
         <div className="flex-1 flex flex-col overflow-y-auto overflow-x-hidden overscroll-y-contain px-4 md:px-6 pb-2" style={{ viewTransitionName: 'content' }}>
           <div className="flex-1">
-            <Outlet />
+            {/* Key on slug forces page remount on workspace switch,
+                clearing all stale useState (workspace data, loading flags, etc.).
+                Sidebar + ChatPanel stay mounted — only the page resets. */}
+            <Outlet key={currentSlug} />
           </div>
 
           {/* Branding */}
