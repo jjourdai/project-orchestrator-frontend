@@ -1246,6 +1246,7 @@ export interface CreateTaskRequest {
 
 export interface UpdateTaskRequest {
   title?: string
+  description?: string
   status?: TaskStatus
   assigned_to?: string
   priority?: number

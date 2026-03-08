@@ -8,7 +8,7 @@ import { tasksApi, plansApi, projectsApi, decisionsApi } from '@/services'
 import { useConfirmDialog, useFormDialog, useLinkDialog, useToast, useSectionObserver, useWorkspaceSlug, useViewTransition } from '@/hooks'
 import { workspacePath } from '@/utils/paths'
 import { taskRefreshAtom, projectRefreshAtom, planRefreshAtom } from '@/atoms'
-import { CreateStepForm, CreateDecisionForm } from '@/components/forms'
+import { CreateStepForm, CreateDecisionForm, EditTaskForm } from '@/components/forms'
 import { CommitList } from '@/components/commits'
 import type { Task, Step, Decision, Commit, TaskStatus, StepStatus, DecisionStatus, Project } from '@/types'
 
@@ -36,6 +36,7 @@ export function TaskDetailPage() {
   const location = useLocation()
   const wsSlug = useWorkspaceSlug()
   const confirmDialog = useConfirmDialog()
+  const editTaskDialog = useFormDialog()
   const stepFormDialog = useFormDialog()
   const decisionFormDialog = useFormDialog()
   const commitFormDialog = useFormDialog()
@@ -194,6 +195,15 @@ export function TaskDetailPage() {
   if (error) return <ErrorState title="Failed to load" description={error} onRetry={fetchData} />
   if (loading || !task) return <LoadingPage />
 
+  const editTaskForm = EditTaskForm({
+    initialValues: { title: task.title, description: task.description, priority: task.priority },
+    onSubmit: async (data) => {
+      await tasksApi.update(task.id, data)
+      setTask({ ...task, ...data })
+      toast.success('Task updated')
+    },
+  })
+
   // Use state variables for arrays
   const tags = task.tags || []
   const acceptanceCriteria = task.acceptance_criteria || []
@@ -266,6 +276,7 @@ export function TaskDetailPage() {
           ...(task.actual_complexity ? [{ label: 'Actual complexity', value: String(task.actual_complexity) }] : []),
         ]}
         overflowActions={[
+          { label: 'Edit', onClick: () => editTaskDialog.open({ title: 'Edit Task' }) },
           { label: 'Delete', variant: 'danger', onClick: () => confirmDialog.open({
             title: 'Delete Task',
             description: 'This will permanently delete this task and all its steps and decisions.',
@@ -512,6 +523,9 @@ export function TaskDetailPage() {
       </Card>
       </section>
 
+      <FormDialog {...editTaskDialog.dialogProps} onSubmit={editTaskForm.submit}>
+        {editTaskForm.fields}
+      </FormDialog>
       <FormDialog {...stepFormDialog.dialogProps} onSubmit={stepForm.submit}>
         {stepForm.fields}
       </FormDialog>
