@@ -20,13 +20,21 @@ import {
   LoadMoreSentinel,
   SkeletonCard,
 } from '@/components/ui'
-import { useViewMode, useConfirmDialog, useFormDialog, useToast, useMultiSelect, useInfiniteList, useWorkspaceSlug, useViewTransition } from '@/hooks'
+import {
+  useViewMode,
+  useConfirmDialog,
+  useFormDialog,
+  useToast,
+  useMultiSelect,
+  useInfiniteList,
+  useWorkspaceSlug,
+  useViewTransition,
+} from '@/hooks'
 import { CreatePlanForm, EditPlanForm } from '@/components/forms'
 import type { EditPlanFormData } from '@/components/forms/EditPlanForm'
 import { PlanKanbanBoard, PlanKanbanFilterBar } from '@/components/kanban'
 import type { PlanKanbanFilters } from '@/components/kanban'
 import { fadeInUp, staggerContainer, useReducedMotion } from '@/utils/motion'
-import { useState } from 'react'
 import type { Plan, PlanStatus, PaginatedResponse } from '@/types'
 
 const statusOptions = [
@@ -69,7 +77,7 @@ export function PlansPage() {
     <K extends keyof PlanKanbanFilters>(key: K, value: PlanKanbanFilters[K]) => {
       setKanbanFilters((prev) => ({ ...prev, [key]: value }))
     },
-    [],
+    []
   )
 
   const handleClearFilters = useCallback(() => {
@@ -94,11 +102,15 @@ export function PlansPage() {
       _refresh: planRefresh,
       _ws: wsSlug, // trigger reset on workspace change
     }),
-    [statusFilter, planRefresh, wsSlug],
+    [statusFilter, planRefresh, wsSlug]
   )
 
   const listFetcher = useCallback(
-    (params: { limit: number; offset: number; status?: string }): Promise<PaginatedResponse<Plan>> => {
+    (params: {
+      limit: number
+      offset: number
+      status?: string
+    }): Promise<PaginatedResponse<Plan>> => {
       return plansApi.list({
         limit: params.limit,
         offset: params.offset,
@@ -106,7 +118,7 @@ export function PlansPage() {
         workspace_slug: wsSlug,
       })
     },
-    [wsSlug],
+    [wsSlug]
   )
 
   const {
@@ -140,8 +152,10 @@ export function PlansPage() {
         ...params,
         workspace_slug: wsSlug,
       }
-      if (kanbanFilters.priority_min !== undefined) apiParams.priority_min = kanbanFilters.priority_min
-      if (kanbanFilters.priority_max !== undefined) apiParams.priority_max = kanbanFilters.priority_max
+      if (kanbanFilters.priority_min !== undefined)
+        apiParams.priority_min = kanbanFilters.priority_min
+      if (kanbanFilters.priority_max !== undefined)
+        apiParams.priority_max = kanbanFilters.priority_max
       if (kanbanFilters.search) apiParams.search = kanbanFilters.search
 
       const response = await plansApi.list(apiParams as Record<string, string | number | undefined>)
@@ -159,7 +173,7 @@ export function PlansPage() {
         filtered = filtered.filter(
           (p) =>
             p.title.toLowerCase().includes(term) ||
-            (p.description && p.description.toLowerCase().includes(term)),
+            (p.description && p.description.toLowerCase().includes(term))
         )
       }
 
@@ -169,11 +183,14 @@ export function PlansPage() {
         total: filtered.length,
       }
     },
-    [kanbanFilters, wsSlug],
+    [kanbanFilters, wsSlug]
   )
 
   // Filters key — triggers column re-fetch when any filter changes
-  const kanbanColumnFilters = useMemo(() => ({ ...kanbanFilters, _ws: wsSlug }), [kanbanFilters, wsSlug])
+  const kanbanColumnFilters = useMemo(
+    () => ({ ...kanbanFilters, _ws: wsSlug }),
+    [kanbanFilters, wsSlug]
+  )
 
   // Determine which statuses to hide
   const hiddenStatuses = useMemo(() => {
@@ -188,18 +205,22 @@ export function PlansPage() {
       const oldPlan = plans.find((p) => p.id === planId)
       updateItem(
         (p) => p.id === planId,
-        (p) => ({ ...p, status: newStatus }),
+        (p) => ({ ...p, status: newStatus })
       )
       try {
         await plansApi.updateStatus(planId, newStatus)
         toast.success('Status updated')
       } catch {
         // Rollback optimistic update
-        if (oldPlan) updateItem((p) => p.id === planId, () => oldPlan)
+        if (oldPlan)
+          updateItem(
+            (p) => p.id === planId,
+            () => oldPlan
+          )
         toast.error('Failed to update status')
       }
     },
-    [plans, updateItem, toast],
+    [plans, updateItem, toast]
   )
 
   const planForm = CreatePlanForm({
@@ -212,13 +233,25 @@ export function PlansPage() {
   })
 
   const editForm = EditPlanForm({
-    initialValues: { title: editingPlan?.title ?? '', description: editingPlan?.description, priority: editingPlan?.priority },
+    initialValues: {
+      title: editingPlan?.title ?? '',
+      description: editingPlan?.description,
+      priority: editingPlan?.priority,
+      project_id: editingPlan?.project_id,
+    },
+    workspaceSlug: wsSlug,
     onSubmit: async (data: EditPlanFormData) => {
       if (!editingPlan) return
-      await plansApi.update(editingPlan.id, data)
+      const { project_id, ...updateData } = data
+      await plansApi.update(editingPlan.id, updateData)
+      if (project_id && project_id !== editingPlan.project_id) {
+        await plansApi.linkToProject(editingPlan.id, project_id)
+      } else if (!project_id && editingPlan.project_id) {
+        await plansApi.unlinkFromProject(editingPlan.id)
+      }
       updateItem(
         (p) => p.id === editingPlan.id,
-        (p) => ({ ...p, ...data }),
+        (p) => ({ ...p, ...updateData, project_id })
       )
       toast.success('Plan updated')
     },
@@ -290,7 +323,9 @@ export function PlansPage() {
           filters={kanbanColumnFilters}
           hiddenStatuses={hiddenStatuses}
           onPlanStatusChange={handlePlanStatusChange}
-          onPlanClick={(planId) => navigate(`/workspace/${wsSlug}/plans/${planId}`, { type: 'card-click' })}
+          onPlanClick={(planId) =>
+            navigate(`/workspace/${wsSlug}/plans/${planId}`, { type: 'card-click' })
+          }
           refreshTrigger={planRefresh}
         />
       ) : showListSkeleton ? (
@@ -308,7 +343,11 @@ export function PlansPage() {
               ? 'Create a plan to organize your development work.'
               : 'No plans match the current filters.'
           }
-          action={total === 0 && statusFilter === 'all' ? <Button onClick={openCreatePlan}>Create Plan</Button> : undefined}
+          action={
+            total === 0 && statusFilter === 'all' ? (
+              <Button onClick={openCreatePlan}>Create Plan</Button>
+            ) : undefined
+          }
         />
       ) : (
         <>
@@ -341,7 +380,7 @@ export function PlansPage() {
                       await plansApi.updateStatus(plan.id, newStatus)
                       updateItem(
                         (p) => p.id === plan.id,
-                        (p) => ({ ...p, status: newStatus }),
+                        (p) => ({ ...p, status: newStatus })
                       )
                       toast.success('Status updated')
                     }}
@@ -408,16 +447,24 @@ function PlanCard({
 }) {
   return (
     <Link to={`/workspace/${wsSlug}/plans/${plan.id}`}>
-      <Card lazy="lg" className={`transition-colors ${selected ? 'border-indigo-500/40 bg-indigo-500/[0.05]' : 'hover:border-indigo-500'}`}>
+      <Card
+        lazy="lg"
+        className={`transition-colors ${selected ? 'border-indigo-500/40 bg-indigo-500/[0.05]' : 'hover:border-indigo-500'}`}
+      >
         <div className="flex">
-          {onToggleSelect && (
-            <SelectZone selected={!!selected} onToggle={onToggleSelect} />
-          )}
-          <div className={`w-1 shrink-0 ${!onToggleSelect ? 'rounded-l-xl' : ''} ${planStatusBarColor[plan.status] || 'bg-gray-400'}`} />
+          {onToggleSelect && <SelectZone selected={!!selected} onToggle={onToggleSelect} />}
+          <div
+            className={`w-1 shrink-0 ${!onToggleSelect ? 'rounded-l-xl' : ''} ${planStatusBarColor[plan.status] || 'bg-gray-400'}`}
+          />
           <div className="flex-1 min-w-0 p-3 md:p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 sm:gap-3 mb-1">
-                <h3 className="text-base sm:text-lg font-semibold text-gray-100 truncate min-w-0" style={{ viewTransitionName: `plan-title-${plan.id}` }}>{plan.title}</h3>
+                <h3
+                  className="text-base sm:text-lg font-semibold text-gray-100 truncate min-w-0"
+                  style={{ viewTransitionName: `plan-title-${plan.id}` }}
+                >
+                  {plan.title}
+                </h3>
                 <InteractivePlanStatusBadge status={plan.status} onStatusChange={onStatusChange} />
               </div>
               <p className="text-sm text-gray-400 line-clamp-1">{plan.description}</p>

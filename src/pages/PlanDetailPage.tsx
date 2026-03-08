@@ -270,11 +270,18 @@ export function PlanDetailPage() {
   )
 
   const editPlanForm = EditPlanForm({
-    initialValues: { title: plan?.title ?? '', description: plan?.description, priority: plan?.priority },
+    initialValues: { title: plan?.title ?? '', description: plan?.description, priority: plan?.priority, project_id: plan?.project_id },
+    workspaceSlug: wsSlug,
     onSubmit: async (data) => {
       if (!plan) return
-      await plansApi.update(plan.id, data)
-      setPlan({ ...plan, ...data })
+      const { project_id, ...updateData } = data
+      await plansApi.update(plan.id, updateData)
+      if (project_id && project_id !== plan.project_id) {
+        await plansApi.linkToProject(plan.id, project_id)
+      } else if (!project_id && plan.project_id) {
+        await plansApi.unlinkFromProject(plan.id)
+      }
+      setPlan({ ...plan, ...updateData, project_id } as Plan)
       toast.success('Plan updated')
     },
   })
