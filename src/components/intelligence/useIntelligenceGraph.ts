@@ -16,14 +16,16 @@ import {
   intelligenceErrorAtom,
   intelligenceSummaryAtom,
   intelligenceSummaryLoadingAtom,
+  intelligenceCommunitiesAtom,
   visibleNodesAtom,
   budgetedEdgesAtom,
-  hiddenEdgeCountAtom,
   selectedNodeIdAtom,
   visibleLayersAtom,
   visibilityModeAtom,
   graphNodeLimitAtom,
   loadingLayersAtom,
+  graphLoadingStagesAtom,
+  type LoadingStage,
 } from '@/atoms/intelligence'
 import { intelligenceApi } from '@/services/intelligence'
 import { VISIBILITY_PRESETS } from '@/constants/intelligence'
@@ -59,7 +61,7 @@ function serializeForWorker(nodes: IntelligenceNode[]) {
 
 /** Map backend layer string to our IntelligenceLayer type */
 function mapLayer(layer: string): IntelligenceLayer {
-  const valid: IntelligenceLayer[] = ['code', 'pm', 'knowledge', 'fabric', 'neural', 'skills', 'behavioral']
+  const valid: IntelligenceLayer[] = ['code', 'pm', 'knowledge', 'fabric', 'neural', 'skills', 'behavioral', 'chat']
   return valid.includes(layer as IntelligenceLayer)
     ? (layer as IntelligenceLayer)
     : 'code'
@@ -141,22 +143,32 @@ export function useIntelligenceGraph(projectSlug: string | undefined) {
   const setError = useSetAtom(intelligenceErrorAtom)
   const setSummary = useSetAtom(intelligenceSummaryAtom)
   const setSummaryLoading = useSetAtom(intelligenceSummaryLoadingAtom)
+  const setCommunities = useSetAtom(intelligenceCommunitiesAtom)
   const [selectedNodeId, setSelectedNodeId] = useAtom(selectedNodeIdAtom)
   const [visibleLayers, setVisibleLayers] = useAtom(visibleLayersAtom)
   const setVisibilityMode = useSetAtom(visibilityModeAtom)
   const nodeLimit = useAtomValue(graphNodeLimitAtom)
   const setLoadingLayers = useSetAtom(loadingLayersAtom)
+  const setStages = useSetAtom(graphLoadingStagesAtom)
 
   const visibleNodes = useAtomValue(visibleNodesAtom)
   const visibleEdges = useAtomValue(budgetedEdgesAtom)
-  const hiddenEdgeCount = useAtomValue(hiddenEdgeCountAtom)
 
   // Track which layers have already been fetched to avoid redundant calls
   const fetchedLayersRef = useRef<Set<string>>(new Set())
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // ── Stage helpers ─────────────────────────────────────────────────────────
+  const updateStage = useCallback((id: string, patch: Partial<LoadingStage>) => {
+    setStages((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)))
+  }, [setStages])
+
   // Fetch graph data — only request the specified layers
-  const fetchGraphForLayers = useCallback(async (layers: string[], limit: number) => {
+  const fetchGraphForLayers = useCallback(async (
+    layers: string[],
+    limit: number,
+    stageId?: string,
+  ) => {
     if (!projectSlug || layers.length === 0) return
     setLoading(true)
     setError(null)
@@ -166,11 +178,25 @@ export function useIntelligenceGraph(projectSlug: string | undefined) {
       layers.forEach((l) => next.add(l))
       return next
     })
+    if (stageId) updateStage(stageId, { status: 'loading', startedAt: Date.now() })
     try {
       const data = await intelligenceApi.getGraph(projectSlug, { layers, limit })
 
       const rfNodes = data.nodes.map(toReactFlowNode)
       const rfEdges = data.edges.map(toReactFlowEdge)
+
+      // Store communities from the backend response
+      if (data.communities?.length > 0) {
+        setCommunities(data.communities)
+      }
+
+      if (stageId) {
+        updateStage(stageId, {
+          status: 'done',
+          completedAt: Date.now(),
+          detail: `${rfNodes.length} nodes`,
+        })
+      }
 
       // Merge with existing data (for incremental layer loading)
       // or replace entirely (for initial load / slug change)
@@ -199,6 +225,7 @@ export function useIntelligenceGraph(projectSlug: string | undefined) {
     } catch (err) {
       console.error('[useIntelligenceGraph] fetch error:', err)
       setError(err instanceof Error ? err.message : 'Failed to load graph')
+      if (stageId) updateStage(stageId, { status: 'error', completedAt: Date.now() })
     } finally {
       setLoading(false)
       setLoadingLayers((prev: Set<string>) => {
@@ -207,7 +234,7 @@ export function useIntelligenceGraph(projectSlug: string | undefined) {
         return next
       })
     }
-  }, [projectSlug, setNodes, setEdges, setLoading, setError, setLoadingLayers])
+  }, [projectSlug, setNodes, setEdges, setLoading, setError, setCommunities, setLoadingLayers, updateStage])
 
   // Public fetchGraph — fetches all currently visible layers
   const fetchGraph = useCallback(async () => {
@@ -220,15 +247,18 @@ export function useIntelligenceGraph(projectSlug: string | undefined) {
   const fetchSummary = useCallback(async () => {
     if (!projectSlug) return
     setSummaryLoading(true)
+    updateStage('fetch_summary', { status: 'loading', startedAt: Date.now() })
     try {
       const summary = await intelligenceApi.getSummary(projectSlug)
       setSummary(summary)
+      updateStage('fetch_summary', { status: 'done', completedAt: Date.now() })
     } catch {
       // Summary is optional — don't block the graph
+      updateStage('fetch_summary', { status: 'done', completedAt: Date.now(), detail: 'skipped' })
     } finally {
       setSummaryLoading(false)
     }
-  }, [projectSlug, setSummary, setSummaryLoading])
+  }, [projectSlug, setSummary, setSummaryLoading, updateStage])
 
   // Load on mount / slug change — progressive: code layer first for fast first paint
   useEffect(() => {
@@ -238,16 +268,30 @@ export function useIntelligenceGraph(projectSlug: string | undefined) {
     const layers = Array.from(visibleLayers) as string[]
 
     // Progressive loading: fetch primary layer first (code), then remaining layers.
-    // This gives a fast first paint (~200 file nodes) while other layers load in background.
     const primary = layers.filter((l) => l === 'code' || l === 'fabric')
     const rest = layers.filter((l) => l !== 'code' && l !== 'fabric')
 
+    // Initialize loading stages for step-by-step progress
+    const stages: LoadingStage[] = []
+    if (primary.length > 0) {
+      stages.push({ id: 'fetch_primary', label: `Fetching code & fabric layers`, status: 'pending' })
+    }
+    if (rest.length > 0) {
+      stages.push({ id: 'fetch_secondary', label: `Fetching ${rest.join(', ')} layers`, status: 'pending' })
+    }
+    if (primary.length === 0 && rest.length === 0) {
+      stages.push({ id: 'fetch_data', label: 'Fetching graph data', status: 'pending' })
+    }
+    stages.push({ id: 'fetch_summary', label: 'Loading summary', status: 'pending' })
+    stages.push({ id: 'layout', label: 'Computing layout', status: 'pending' })
+    setStages(stages)
+
     if (primary.length > 0 && rest.length > 0) {
-      fetchGraphForLayers(primary, nodeLimit).then(() => {
-        fetchGraphForLayers(rest, nodeLimit)
+      fetchGraphForLayers(primary, nodeLimit, 'fetch_primary').then(() => {
+        fetchGraphForLayers(rest, nodeLimit, 'fetch_secondary')
       })
     } else {
-      fetchGraphForLayers(layers, nodeLimit)
+      fetchGraphForLayers(layers, nodeLimit, 'fetch_data')
     }
     fetchSummary()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only on slug change
@@ -262,7 +306,14 @@ export function useIntelligenceGraph(projectSlug: string | undefined) {
         (l) => !fetchedLayersRef.current.has(l),
       ) as string[]
       if (needed.length > 0) {
-        fetchGraphForLayers(needed, nodeLimit)
+        // Create loading stages for the incremental fetch + layout
+        const stageId = `fetch_${needed.join('_')}`
+        const stages: LoadingStage[] = [
+          { id: stageId, label: `Fetching ${needed.join(', ')} layers`, status: 'pending' },
+          { id: 'layout', label: 'Computing layout', status: 'pending' },
+        ]
+        setStages(stages)
+        fetchGraphForLayers(needed, nodeLimit, stageId)
       }
     }, 300)
     return () => {
@@ -295,43 +346,104 @@ export function useIntelligenceGraph(projectSlug: string | undefined) {
   }, [setVisibleLayers, setVisibilityMode])
 
   // ── Async dagre layout via Web Worker ─────────────────────────────────────
-  // Posts nodes/edges to the worker, receives computed positions, applies them.
-  // Cancels stale layout requests when inputs change before completion.
+  // Posts nodes/edges to the worker, receives progress + result messages.
+  // The worker splits into connected components and reports per-component progress.
   const [layoutedNodes, setLayoutedNodes] = useState<IntelligenceNode[]>([])
   const [layoutedEdges, setLayoutedEdges] = useState<IntelligenceEdge[]>([])
   const [layouting, setLayouting] = useState(false)
   const layoutVersionRef = useRef(0)
+
+  // Track node identity to detect edge-only changes (e.g. show-all-edges toggle)
+  const prevNodeFingerprintRef = useRef('')
+  const hasLayoutedOnceRef = useRef(false)
 
   useEffect(() => {
     if (visibleNodes.length === 0) {
       setLayoutedNodes([])
       setLayoutedEdges([])
       setLayouting(false)
+      prevNodeFingerprintRef.current = ''
+      hasLayoutedOnceRef.current = false
+      return
+    }
+
+    // Build a lightweight fingerprint of node IDs to detect node-set changes
+    const nodeFingerprint = visibleNodes.map((n) => n.id).sort().join(',')
+    const nodesChanged = nodeFingerprint !== prevNodeFingerprintRef.current
+    prevNodeFingerprintRef.current = nodeFingerprint
+
+    // If only edges changed (e.g. show-all-edges toggle, CO_CHANGED threshold),
+    // skip the full dagre re-layout — node positions don't change.
+    // Show a brief loading stage so the user sees feedback.
+    if (!nodesChanged && hasLayoutedOnceRef.current) {
+      const edgeCount = visibleEdges.length
+      const startedAt = Date.now()
+      setStages([
+        { id: 'update_edges', label: 'Updating edges', status: 'loading', startedAt, detail: `${edgeCount} edges` },
+      ])
+      // Use rAF to let the loading stage render before updating
+      requestAnimationFrame(() => {
+        setLayoutedEdges(visibleEdges)
+        setStages([
+          { id: 'update_edges', label: 'Updating edges', status: 'done', startedAt, completedAt: Date.now(), detail: `${edgeCount} edges` },
+        ])
+      })
       return
     }
 
     const version = ++layoutVersionRef.current
     setLayouting(true)
+    updateStage('layout', { status: 'loading', startedAt: Date.now() })
 
     const worker = getDagreWorker()
     const serializedNodes = serializeForWorker(visibleNodes)
     const serializedEdges = visibleEdges.map((e) => ({ source: e.source, target: e.target }))
 
-    const handler = (event: MessageEvent<{ nodes: { id: string; x: number; y: number }[] }>) => {
-      // Ignore stale results from a previous layout request
+    const handler = (event: MessageEvent<{ type: string; [key: string]: unknown }>) => {
       if (version !== layoutVersionRef.current) return
+      const msg = event.data
 
-      const positionMap = new Map(event.data.nodes.map((n) => [n.id, { x: n.x, y: n.y }]))
+      if (msg.type === 'progress') {
+        const { done, total, nodesDone, nodesTotal } = msg as {
+          type: string; done: number; total: number; nodesDone: number; nodesTotal: number
+        }
+        updateStage('layout', {
+          status: 'loading',
+          detail: total > 1
+            ? `${done}/${total} clusters · ${nodesDone}/${nodesTotal} nodes`
+            : `${nodesDone}/${nodesTotal} nodes`,
+          progress: nodesDone,
+          progressTotal: nodesTotal,
+        })
+        return
+      }
 
-      setLayoutedNodes(
-        visibleNodes.map((node) => {
-          const pos = positionMap.get(node.id)
-          return pos ? { ...node, position: pos } : node
-        }),
-      )
-      setLayoutedEdges(visibleEdges)
-      setLayouting(false)
-      worker.removeEventListener('message', handler)
+      if (msg.type === 'result') {
+        const { nodes: resultNodes, components } = msg as {
+          type: string; nodes: { id: string; x: number; y: number }[]; components: number
+        }
+        const positionMap = new Map(resultNodes.map((n) => [n.id, { x: n.x, y: n.y }]))
+
+        setLayoutedNodes(
+          visibleNodes.map((node) => {
+            const pos = positionMap.get(node.id)
+            return pos ? { ...node, position: pos } : node
+          }),
+        )
+        setLayoutedEdges(visibleEdges)
+        setLayouting(false)
+        hasLayoutedOnceRef.current = true
+        updateStage('layout', {
+          status: 'done',
+          completedAt: Date.now(),
+          detail: components > 1
+            ? `${visibleNodes.length} nodes · ${components} clusters`
+            : `${visibleNodes.length} nodes`,
+          progress: visibleNodes.length,
+          progressTotal: visibleNodes.length,
+        })
+        worker.removeEventListener('message', handler)
+      }
     }
 
     worker.addEventListener('message', handler)
@@ -340,7 +452,7 @@ export function useIntelligenceGraph(projectSlug: string | undefined) {
     return () => {
       worker.removeEventListener('message', handler)
     }
-  }, [visibleNodes, visibleEdges])
+  }, [visibleNodes, visibleEdges, updateStage])
 
   return {
     nodes: layoutedNodes,
@@ -348,7 +460,6 @@ export function useIntelligenceGraph(projectSlug: string | undefined) {
     layouting,
     allNodes: nodes,
     allEdges: edges,
-    hiddenEdgeCount,
     selectedNodeId,
     setSelectedNodeId,
     visibleLayers,

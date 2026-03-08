@@ -6,12 +6,41 @@ import type {
   IntelligenceRelationType,
   IntelligenceSummary,
   VisibilityMode,
+  BackendGraphCommunity,
 } from '@/types/intelligence'
 import { LAYERS, LAYER_ORDER, ANIMATION, EDGE_RENDER_PRIORITY } from '@/constants/intelligence'
 
 // ============================================================================
 // INTELLIGENCE VISUALIZATION — Jotai Atoms
 // ============================================================================
+
+// ── Loading stages (step-by-step progress) ──────────────────────────────────
+
+export type LoadingStageStatus = 'pending' | 'loading' | 'done' | 'error'
+
+export interface LoadingStage {
+  id: string
+  label: string
+  status: LoadingStageStatus
+  detail?: string          // e.g. "245 nodes" after done
+  startedAt?: number       // Date.now()
+  completedAt?: number
+  /** Sub-progress: current value (e.g. clusters done, nodes fetched) */
+  progress?: number
+  /** Sub-progress: total value */
+  progressTotal?: number
+}
+
+/** Ordered loading stages — updated by the graph hooks for step-by-step UX */
+export const graphLoadingStagesAtom = atom<LoadingStage[]>([])
+
+/** Whether the loading progress overlay should be visible */
+export const graphLoadingActiveAtom = atom<boolean>((get) => {
+  const stages = get(graphLoadingStagesAtom)
+  if (stages.length === 0) return false
+  // Active if any stage is loading or pending (not all done/error)
+  return stages.some((s) => s.status === 'loading' || s.status === 'pending')
+})
 
 // ── Layer visibility ─────────────────────────────────────────────────────────
 
@@ -24,6 +53,9 @@ export const visibleLayersAtom = atom<Set<IntelligenceLayer>>(
 
 /** Current visibility preset mode */
 export const visibilityModeAtom = atom<VisibilityMode>('code_only')
+
+/** Hovered entity type from the legend — highlights matching nodes on the canvas */
+export const legendHoveredTypeAtom = atom<string | null>(null)
 
 // ── Graph data ───────────────────────────────────────────────────────────────
 
@@ -113,9 +145,13 @@ function getEdgePriority(edge: IntelligenceEdge): number {
   return relationType ? (edgePriorityIndex.get(relationType) ?? 999) : 999
 }
 
+/** When true, bypass the edge budget and show ALL edges */
+export const showAllEdgesAtom = atom<boolean>(false)
+
 /** Edges after budget culling — sorted by EDGE_RENDER_PRIORITY, capped at MAX_VISIBLE_EDGES */
 export const budgetedEdgesAtom = atom<IntelligenceEdge[]>((get) => {
   const edges = get(visibleEdgesAtom)
+  if (get(showAllEdgesAtom)) return edges
   const max = ANIMATION.MAX_VISIBLE_EDGES
   if (edges.length <= max) return edges
   // Sort by priority (stable: Array.sort is stable in V8)
@@ -140,6 +176,12 @@ export const touchesHeatmapAtom = atom<boolean>(false)
 
 /** CO_CHANGED threshold — hide CO_CHANGED edges with count below this value */
 export const coChangeThresholdAtom = atom<number>(1)
+
+/** Community hulls toggle — show/hide convex hull overlays in 3D view */
+export const showCommunityHullsAtom = atom<boolean>(false)
+
+/** Communities from the backend graph response */
+export const intelligenceCommunitiesAtom = atom<BackendGraphCommunity[]>([])
 
 // ── Graph node limit ────────────────────────────────────────────────────────
 

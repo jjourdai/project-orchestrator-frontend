@@ -1,19 +1,23 @@
 import { lazy, Suspense, useCallback, useState, useEffect, useRef } from 'react'
-import { useAtom, useAtomValue } from 'jotai'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { Maximize, Minimize, PanelRightClose, PanelRightOpen, Search, X } from 'lucide-react'
 
 import { useWorkspaceIntelligenceGraph } from './useWorkspaceIntelligenceGraph'
 import { NodeInspector } from './NodeInspector'
 import { LayerControls } from './LayerControls'
 import { SpreadingActivation, activationSearchOpenAtom } from './SpreadingActivation'
+import { GraphLoadingProgress } from './GraphLoadingProgress'
 import { ENTITY_COLORS, PROJECT_COLORS } from '@/constants/intelligence'
 import {
   intelligenceLoadingAtom,
   intelligenceErrorAtom,
   selectedNodeIdAtom,
+  legendHoveredTypeAtom,
 } from '@/atoms/intelligence'
 import { ErrorState } from '@/components/ui/ErrorState'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { useWindowFullscreen } from '@/hooks/useWindowFullscreen'
+import { isTauri } from '@/services/env'
 import type { IntelligenceLayer } from '@/types/intelligence'
 
 // ── Entity legend ──────────────────────────────────────────────────────────
@@ -41,7 +45,12 @@ const ENTITY_LEGEND: { layer: IntelligenceLayer; types: { key: string; label: st
   { layer: 'pm', types: [
     { key: 'plan', label: 'Plan' },
     { key: 'task', label: 'Task' },
+    { key: 'step', label: 'Step' },
     { key: 'milestone', label: 'Milestone' },
+    { key: 'release', label: 'Release' },
+  ]},
+  { layer: 'chat', types: [
+    { key: 'chat_session', label: 'Chat Session' },
   ]},
 ]
 
@@ -59,13 +68,12 @@ export default function WorkspaceGraphPage({ workspaceSlug, embedded }: Workspac
   const error = useAtomValue(intelligenceErrorAtom)
   const [searchOpen, setSearchOpen] = useAtom(activationSearchOpenAtom)
   const selectedNodeId = useAtomValue(selectedNodeIdAtom)
+  const setLegendHoveredType = useSetAtom(legendHoveredTypeAtom)
 
   const {
     nodes: layoutedNodes,
     edges,
-    layouting,
     allNodes,
-    hiddenEdgeCount,
     visibleLayers,
     toggleLayer,
     applyPreset,
@@ -78,21 +86,33 @@ export default function WorkspaceGraphPage({ workspaceSlug, embedded }: Workspac
 
   // Fullscreen
   const containerRef = useRef<HTMLDivElement>(null)
-  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [browserFs, setBrowserFs] = useState(false)
+  const tauriFs = useWindowFullscreen()
+  const isFullscreen = isTauri ? tauriFs : browserFs
   const [showCustomPanel, setShowCustomPanel] = useState(false)
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false)
 
-  const toggleFullscreen = useCallback(() => {
-    if (!containerRef.current) return
-    if (!document.fullscreenElement) {
-      containerRef.current.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => {})
+  const toggleFullscreen = useCallback(async () => {
+    if (isTauri) {
+      try {
+        const { getCurrentWindow } = await import('@tauri-apps/api/window')
+        const win = getCurrentWindow()
+        const current = await win.isFullscreen()
+        await win.setFullscreen(!current)
+      } catch { /* fallback: no-op */ }
     } else {
-      document.exitFullscreen().then(() => setIsFullscreen(false)).catch(() => {})
+      if (!containerRef.current) return
+      if (!document.fullscreenElement) {
+        containerRef.current.requestFullscreen().then(() => setBrowserFs(true)).catch(() => {})
+      } else {
+        document.exitFullscreen().then(() => setBrowserFs(false)).catch(() => {})
+      }
     }
   }, [])
 
   useEffect(() => {
-    const onFsChange = () => setIsFullscreen(!!document.fullscreenElement)
+    if (isTauri) return
+    const onFsChange = () => setBrowserFs(!!document.fullscreenElement)
     document.addEventListener('fullscreenchange', onFsChange)
     return () => document.removeEventListener('fullscreenchange', onFsChange)
   }, [])
@@ -111,14 +131,13 @@ export default function WorkspaceGraphPage({ workspaceSlug, embedded }: Workspac
   }, [setSearchOpen])
 
   const hasData = allNodes.length > 0
-  const showLoading = loading && !hasData
   const showError = !!error && !hasData
   const showEmpty = !loading && !error && !hasData
 
   return (
     <div
       ref={containerRef}
-      className={`relative ${
+      className={`relative bg-[#0f172a] ${
         isFullscreen
           ? 'w-screen bg-slate-950'
           : embedded
@@ -198,20 +217,6 @@ export default function WorkspaceGraphPage({ workspaceSlug, embedded }: Workspac
       </Suspense>
 
       {/* ── Overlay states ── */}
-      {showLoading && (
-        <div className="absolute inset-0 z-30 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm">
-          <div className="flex flex-col items-center gap-3">
-            <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-            <p className="text-sm text-slate-400">Loading workspace graph…</p>
-          </div>
-        </div>
-      )}
-      {layouting && !showLoading && hasData && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-800/90 backdrop-blur-sm border border-slate-700 text-xs text-slate-400">
-          <div className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-          Computing layout…
-        </div>
-      )}
       {showError && (
         <div className="absolute inset-0 z-30 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm">
           <ErrorState description={error!} onRetry={fetchGraph} />
@@ -247,39 +252,44 @@ export default function WorkspaceGraphPage({ workspaceSlug, embedded }: Workspac
         </button>
       )}
 
-      {/* Fullscreen (bottom-right) */}
-      <div className="absolute bottom-3 right-3 z-40">
+      {/* Fullscreen + edges toggle (bottom-right) */}
+      <div className="absolute bottom-3 right-3 z-40 flex items-center gap-1 bg-slate-800/90 backdrop-blur-sm rounded-lg border border-slate-700 p-0.5">
         <button
           onClick={toggleFullscreen}
-          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-800/90 backdrop-blur-sm border border-slate-700 text-slate-400 hover:text-slate-200 hover:bg-slate-700/50 transition-colors"
+          className="flex items-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-700/50 transition-colors"
           title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
         >
           {isFullscreen ? <Minimize size={13} /> : <Maximize size={13} />}
         </button>
       </div>
 
-      {/* Entity legend (bottom-left) */}
-      <div className="absolute bottom-3 left-3 z-40 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg bg-slate-900/80 backdrop-blur-sm border border-slate-700/60 px-3 py-2 max-w-md">
-        {ENTITY_LEGEND
-          .filter((group) => visibleLayers.has(group.layer))
-          .flatMap((group) => group.types)
-          .map((t) => {
-            const color = ENTITY_COLORS[t.key as keyof typeof ENTITY_COLORS] ?? '#6B7280'
-            return (
-              <span key={t.key} className="flex items-center gap-1.5 text-[10px] text-slate-400">
+      {/* Bottom-left section: loading progress + entity legend */}
+      <div className="absolute bottom-3 left-3 z-40 flex flex-col items-start gap-2 pointer-events-none">
+        {/* Loading progress — inline, non-blocking */}
+        <GraphLoadingProgress />
+        {/* Entity legend */}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg bg-slate-900/80 backdrop-blur-sm border border-slate-700/60 px-3 py-2 max-w-md pointer-events-auto">
+          {ENTITY_LEGEND
+            .filter((group) => visibleLayers.has(group.layer))
+            .flatMap((group) => group.types)
+            .map((t) => {
+              const color = ENTITY_COLORS[t.key as keyof typeof ENTITY_COLORS] ?? '#6B7280'
+              return (
                 <span
-                  className="w-2 h-2 rounded-full shrink-0"
-                  style={{ backgroundColor: color }}
-                />
-                {t.label}
-              </span>
-            )
-          })}
-        {hiddenEdgeCount > 0 && (
-          <span className="flex items-center gap-1 text-[10px] text-amber-400/80 ml-2 pl-2 border-l border-slate-700/60">
-            {hiddenEdgeCount} edges hidden
-          </span>
-        )}
+                  key={t.key}
+                  className="flex items-center gap-1.5 text-[10px] text-slate-400 cursor-pointer hover:text-slate-200 transition-colors"
+                  onMouseEnter={() => setLegendHoveredType(t.key)}
+                  onMouseLeave={() => setLegendHoveredType(null)}
+                >
+                  <span
+                    className="w-2 h-2 rounded-full shrink-0"
+                    style={{ backgroundColor: color }}
+                  />
+                  {t.label}
+                </span>
+              )
+            })}
+        </div>
       </div>
 
       {/* Keyboard shortcut hint (bottom-center) */}
