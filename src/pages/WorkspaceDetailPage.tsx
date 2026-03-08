@@ -127,12 +127,15 @@ export function WorkspaceDetailPage() {
   })
 
   const editWorkspaceForm = EditWorkspaceForm({
-    initialValues: { name: workspace?.name ?? '', description: workspace?.description },
+    initialValues: { name: workspace?.name ?? '', description: workspace?.description, slug: workspace?.slug ?? '' },
     onSubmit: async (data) => {
       if (!slug) return
       const updated = await workspacesApi.update(slug, data)
       setWorkspace(updated)
       toast.success('Workspace renamed')
+      if (data.slug && data.slug !== slug) {
+        navigate(`/workspace/${data.slug}/overview`, { replace: true })
+      }
     },
   })
 
