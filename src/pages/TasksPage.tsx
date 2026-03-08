@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useAtom, useAtomValue } from 'jotai'
 import { Link } from 'react-router-dom'
 import { motion, AnimatePresence } from 'motion/react'
@@ -12,6 +12,7 @@ import {
   Badge,
   ViewToggle,
   ConfirmDialog,
+  FormDialog,
   OverflowMenu,
   PageShell,
   SelectZone,
@@ -20,8 +21,10 @@ import {
   SkeletonCard,
   PulseIndicator,
 } from '@/components/ui'
-import { useKanbanFilters, useViewMode, useConfirmDialog, useToast, useMultiSelect, useInfiniteList, useWorkspaceSlug, useViewTransition } from '@/hooks'
+import { useKanbanFilters, useViewMode, useConfirmDialog, useFormDialog, useToast, useMultiSelect, useInfiniteList, useWorkspaceSlug, useViewTransition } from '@/hooks'
 import { KanbanBoard, KanbanFilterBar } from '@/components/kanban'
+import { EditTaskForm } from '@/components/forms'
+import type { EditTaskFormData } from '@/components/forms/EditTaskForm'
 import type { TaskWithPlan, TaskStatus, PaginatedResponse } from '@/types'
 import type { KanbanTask } from '@/components/kanban'
 import { fadeInUp, staggerContainer, useReducedMotion } from '@/utils/motion'
@@ -43,7 +46,9 @@ export function TasksPage() {
   const [viewMode, setViewMode] = useViewMode()
   const { navigate } = useViewTransition()
   const confirmDialog = useConfirmDialog()
+  const editDialog = useFormDialog()
   const toast = useToast()
+  const [editingTask, setEditingTask] = useState<TaskWithPlan | null>(null)
   const kanbanFilters = useKanbanFilters()
   const wsSlug = useWorkspaceSlug()
   const reducedMotion = useReducedMotion()
@@ -148,6 +153,24 @@ export function TasksPage() {
     },
     [navigate, wsSlug],
   )
+
+  const editForm = EditTaskForm({
+    initialValues: { title: editingTask?.title, description: editingTask?.description, priority: editingTask?.priority, estimated_complexity: editingTask?.estimated_complexity, tags: editingTask?.tags },
+    onSubmit: async (data: EditTaskFormData) => {
+      if (!editingTask) return
+      await tasksApi.update(editingTask.id, data)
+      updateItem(
+        (t) => t.id === editingTask.id,
+        (t) => ({ ...t, ...data }),
+      )
+      toast.success('Task updated')
+    },
+  })
+
+  const handleEditTask = (task: TaskWithPlan) => {
+    setEditingTask(task)
+    editDialog.open({ title: 'Edit Task' })
+  }
 
   const multiSelect = useMultiSelect(tasks, (t) => t.id)
 
@@ -254,6 +277,7 @@ export function TasksPage() {
                     selected={multiSelect.isSelected(task.id)}
                     onToggleSelect={(shiftKey) => multiSelect.toggle(task.id, shiftKey)}
                     task={task}
+                    onEdit={() => handleEditTask(task)}
                     onStatusChange={async (newStatus) => {
                       await tasksApi.update(task.id, { status: newStatus })
                       updateItem(
@@ -287,6 +311,9 @@ export function TasksPage() {
         onDelete={handleBulkDelete}
         onClear={multiSelect.clear}
       />
+      <FormDialog {...editDialog.dialogProps} onSubmit={editForm.submit}>
+        {editForm.fields}
+      </FormDialog>
       <ConfirmDialog {...confirmDialog.dialogProps} />
     </PageShell>
   )
@@ -302,6 +329,7 @@ const taskStatusBarColor: Record<TaskStatus, string> = {
 
 function TaskCard({
   task,
+  onEdit,
   onStatusChange,
   onDelete,
   selected,
@@ -309,6 +337,7 @@ function TaskCard({
   wsSlug,
 }: {
   task: TaskWithPlan
+  onEdit: () => void
   onStatusChange: (status: TaskStatus) => Promise<void>
   onDelete: () => void
   selected?: boolean
@@ -358,6 +387,7 @@ function TaskCard({
                 )}
                 <OverflowMenu
                   actions={[
+                    { label: 'Edit', onClick: () => onEdit() },
                     { label: 'Delete', variant: 'danger', onClick: () => onDelete() },
                   ]}
                 />

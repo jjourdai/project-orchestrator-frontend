@@ -1246,10 +1246,12 @@ export interface CreateTaskRequest {
 
 export interface UpdateTaskRequest {
   title?: string
+  description?: string
   status?: TaskStatus
   assigned_to?: string
   priority?: number
   tags?: string[]
+  estimated_complexity?: number
   actual_complexity?: number
 }
 

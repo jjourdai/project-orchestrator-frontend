@@ -1,14 +1,14 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, Link, useLocation } from 'react-router-dom'
 import { useAtomValue } from 'jotai'
-import { ClipboardList, FolderKanban, GitCommitHorizontal } from 'lucide-react'
+import { ClipboardList, FolderKanban, GitCommitHorizontal, Pencil } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardContent, LoadingPage, ErrorState, Badge, Button, ConfirmDialog, FormDialog, LinkEntityDialog, TaskStatusBadge, InteractiveStepStatusBadge, InteractiveDecisionStatusBadge, ProgressBar, PageHeader, StatusSelect, SectionNav } from '@/components/ui'
 import type { ParentLink } from '@/components/ui/PageHeader'
 import { tasksApi, plansApi, projectsApi, decisionsApi } from '@/services'
 import { useConfirmDialog, useFormDialog, useLinkDialog, useToast, useSectionObserver, useWorkspaceSlug, useViewTransition } from '@/hooks'
 import { workspacePath } from '@/utils/paths'
 import { taskRefreshAtom, projectRefreshAtom, planRefreshAtom } from '@/atoms'
-import { CreateStepForm, CreateDecisionForm } from '@/components/forms'
+import { CreateStepForm, CreateDecisionForm, EditTaskForm, EditStepForm } from '@/components/forms'
 import { CommitList } from '@/components/commits'
 import type { Task, Step, Decision, Commit, TaskStatus, StepStatus, DecisionStatus, Project } from '@/types'
 
@@ -36,7 +36,10 @@ export function TaskDetailPage() {
   const location = useLocation()
   const wsSlug = useWorkspaceSlug()
   const confirmDialog = useConfirmDialog()
+  const editTaskDialog = useFormDialog()
+  const editStepDialog = useFormDialog()
   const stepFormDialog = useFormDialog()
+  const [editingStep, setEditingStep] = useState<Step | null>(null)
   const decisionFormDialog = useFormDialog()
   const commitFormDialog = useFormDialog()
   const linkDialog = useLinkDialog()
@@ -191,6 +194,26 @@ export function TaskDetailPage() {
   const sectionIds = ['steps', 'dependencies', 'decisions', 'commits']
   const activeSection = useSectionObserver(sectionIds)
 
+  const editStepForm = EditStepForm({
+    initialValues: { description: editingStep?.description ?? '', verification: editingStep?.verification },
+    onSubmit: async (data) => {
+      if (!editingStep) return
+      await tasksApi.updateStep(editingStep.id, data)
+      setSteps(prev => prev.map(s => s.id === editingStep.id ? { ...s, ...data } : s))
+      toast.success('Step updated')
+    },
+  })
+
+  const editTaskForm = EditTaskForm({
+    initialValues: { title: task?.title, description: task?.description, priority: task?.priority, estimated_complexity: task?.estimated_complexity, tags: task?.tags },
+    onSubmit: async (data) => {
+      if (!task) return
+      await tasksApi.update(task.id, data)
+      setTask({ ...task, ...data })
+      toast.success('Task updated')
+    },
+  })
+
   if (error) return <ErrorState title="Failed to load" description={error} onRetry={fetchData} />
   if (loading || !task) return <LoadingPage />
 
@@ -266,6 +289,7 @@ export function TaskDetailPage() {
           ...(task.actual_complexity ? [{ label: 'Actual complexity', value: String(task.actual_complexity) }] : []),
         ]}
         overflowActions={[
+          { label: 'Edit', onClick: () => editTaskDialog.open({ title: 'Edit Task' }) },
           { label: 'Delete', variant: 'danger', onClick: () => confirmDialog.open({
             title: 'Delete Task',
             description: 'This will permanently delete this task and all its steps and decisions.',
@@ -318,9 +342,13 @@ export function TaskDetailPage() {
                   step={step}
                   index={index}
                   onStatusChange={async (newStatus) => {
-                    await tasksApi.updateStep(step.id, newStatus)
+                    await tasksApi.updateStep(step.id, { status: newStatus })
                     setSteps(prev => prev.map(s => s.id === step.id ? { ...s, status: newStatus } : s))
                     toast.success('Step status updated')
+                  }}
+                  onEdit={() => {
+                    setEditingStep(step)
+                    editStepDialog.open({ title: 'Edit Step' })
                   }}
                   onDelete={async () => {
                     await tasksApi.deleteStep(step.id)
@@ -512,6 +540,12 @@ export function TaskDetailPage() {
       </Card>
       </section>
 
+      <FormDialog {...editStepDialog.dialogProps} onSubmit={editStepForm.submit}>
+        {editStepForm.fields}
+      </FormDialog>
+      <FormDialog {...editTaskDialog.dialogProps} onSubmit={editTaskForm.submit}>
+        {editTaskForm.fields}
+      </FormDialog>
       <FormDialog {...stepFormDialog.dialogProps} onSubmit={stepForm.submit}>
         {stepForm.fields}
       </FormDialog>
@@ -553,11 +587,13 @@ function StepRow({
   step,
   index,
   onStatusChange,
+  onEdit,
   onDelete,
 }: {
   step: Step
   index: number
   onStatusChange: (status: StepStatus) => Promise<void>
+  onEdit: () => void
   onDelete: () => void
 }) {
   const statusColors: Record<string, string> = {
@@ -582,6 +618,13 @@ function StepRow({
         status={step.status}
         onStatusChange={onStatusChange}
       />
+      <button
+        onClick={onEdit}
+        className="text-gray-500 hover:text-indigo-400 text-sm px-1"
+        title="Edit step"
+      >
+        <Pencil className="w-3.5 h-3.5" />
+      </button>
       <button
         onClick={onDelete}
         className="text-gray-500 hover:text-red-400 text-sm px-1"

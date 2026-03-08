@@ -7,7 +7,7 @@ import { workspacesApi, projectsApi } from '@/services'
 import { useFormDialog, useLinkDialog, useToast, useConfirmDialog, useSectionObserver, useWorkspaceSlug } from '@/hooks'
 import { workspacePath } from '@/utils/paths'
 import { workspaceRefreshAtom, projectRefreshAtom, milestoneRefreshAtom, taskRefreshAtom } from '@/atoms'
-import { CreateMilestoneForm, CreateResourceForm, CreateComponentForm } from '@/components/forms'
+import { CreateMilestoneForm, CreateResourceForm, CreateComponentForm, EditWorkspaceForm } from '@/components/forms'
 import {
   IntelHealthBreakdown,
   IntelLayerCards,
@@ -34,10 +34,12 @@ interface WorkspaceOverviewResponse {
 export function WorkspaceDetailPage() {
   const slug = useWorkspaceSlug()
   const navigate = useNavigate()
+  const editWorkspaceDialog = useFormDialog()
   const milestoneFormDialog = useFormDialog()
   const resourceFormDialog = useFormDialog()
   const componentFormDialog = useFormDialog()
   const linkDialog = useLinkDialog()
+  const moveDialog = useLinkDialog()
   const confirmDialog = useConfirmDialog()
   const toast = useToast()
   const workspaceRefresh = useAtomValue(workspaceRefreshAtom)
@@ -125,6 +127,19 @@ export function WorkspaceDetailPage() {
     },
   })
 
+  const editWorkspaceForm = EditWorkspaceForm({
+    initialValues: { name: workspace?.name ?? '', description: workspace?.description, slug: workspace?.slug ?? '' },
+    onSubmit: async (data) => {
+      if (!slug) return
+      const updated = await workspacesApi.update(slug, data)
+      setWorkspace(updated)
+      toast.success('Workspace renamed')
+      if (data.slug && data.slug !== slug) {
+        navigate(`/workspace/${data.slug}/overview`, { replace: true })
+      }
+    },
+  })
+
   // Workspace intelligence data (aggregated across all projects)
   const intelligence = useWorkspaceIntelligenceData(slug ?? '')
   const intelReady = !intelligence.loading && !intelligence.error && !!intelligence.summary
@@ -150,6 +165,10 @@ export function WorkspaceDetailPage() {
         title={workspace.name}
         description={workspace.description}
         overflowActions={[
+          {
+            label: 'Rename workspace',
+            onClick: () => editWorkspaceDialog.open({ title: 'Rename Workspace' }),
+          },
           {
             label: 'Delete workspace',
             variant: 'danger',
@@ -337,6 +356,32 @@ export function WorkspaceDetailPage() {
                   <div className="flex items-center gap-2 shrink-0">
                     <span className="text-xs text-gray-500 hidden sm:inline">{project.slug}</span>
                     <button
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        moveDialog.open({
+                          title: `Move "${project.name}" to workspace`,
+                          submitLabel: 'Move',
+                          fetchOptions: async () => {
+                            const allWorkspaces = await workspacesApi.list()
+                            return (allWorkspaces.items || [])
+                              .filter(w => w.slug !== workspace.slug)
+                              .map(w => ({ value: w.slug, label: w.name, description: w.slug }))
+                          },
+                          onLink: async (targetSlug) => {
+                            await workspacesApi.removeProject(workspace.slug, project.id)
+                            await workspacesApi.addProject(targetSlug, project.id)
+                            setProjects(prev => prev.filter(p => p.id !== project.id))
+                            toast.success(`Project moved to ${targetSlug}`)
+                          },
+                        })
+                      }}
+                      className="text-gray-500 hover:text-indigo-400 text-xs px-1"
+                      title="Move to another workspace"
+                    >
+                      Move
+                    </button>
+                    <button
                       onClick={async (e) => {
                         e.preventDefault()
                         e.stopPropagation()
@@ -477,6 +522,9 @@ export function WorkspaceDetailPage() {
         </section>
       </div>
 
+      <FormDialog {...editWorkspaceDialog.dialogProps} onSubmit={editWorkspaceForm.submit}>
+        {editWorkspaceForm.fields}
+      </FormDialog>
       <FormDialog {...milestoneFormDialog.dialogProps} onSubmit={milestoneForm.submit}>
         {milestoneForm.fields}
       </FormDialog>
@@ -487,6 +535,7 @@ export function WorkspaceDetailPage() {
         {componentForm.fields}
       </FormDialog>
       <LinkEntityDialog {...linkDialog.dialogProps} />
+      <LinkEntityDialog {...moveDialog.dialogProps} />
       <ConfirmDialog {...confirmDialog.dialogProps} />
     </div>
   )

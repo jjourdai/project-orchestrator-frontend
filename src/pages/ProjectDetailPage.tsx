@@ -16,7 +16,7 @@ import { projectsApi, featureGraphsApi } from '@/services'
 import { useConfirmDialog, useFormDialog, useToast, useSectionObserver, useWorkspaceSlug } from '@/hooks'
 import { workspacePath } from '@/utils/paths'
 import { chatSuggestedProjectIdAtom, projectRefreshAtom, planRefreshAtom, milestoneRefreshAtom, taskRefreshAtom } from '@/atoms'
-import { CreateMilestoneForm, CreateReleaseForm } from '@/components/forms'
+import { CreateMilestoneForm, CreateReleaseForm, EditProjectForm } from '@/components/forms'
 import type { Project, ProjectRoadmap, FeatureGraph } from '@/types'
 
 // Lazy-load heavy sub-views — only loaded when the user activates a tab
@@ -48,6 +48,7 @@ export function ProjectDetailPage() {
   const navigate = useNavigate()
   const wsSlug = useWorkspaceSlug()
   const confirmDialog = useConfirmDialog()
+  const editProjectDialog = useFormDialog()
   const milestoneFormDialog = useFormDialog()
   const releaseFormDialog = useFormDialog()
   const toast = useToast()
@@ -164,6 +165,16 @@ export function ProjectDetailPage() {
   ]
   const activeSection = useSectionObserver(sectionIds)
 
+  const editProjectForm = EditProjectForm({
+    initialValues: { name: project?.name ?? '', slug: project?.slug, description: project?.description, root_path: project?.root_path },
+    onSubmit: async (data) => {
+      if (!project) return
+      await projectsApi.update(project.slug, data)
+      setProject({ ...project, ...data })
+      toast.success('Project updated')
+    },
+  })
+
   if (error) return <ErrorState title="Failed to load" description={error} onRetry={fetchData} />
   if (loading || !project) return <LoadingPage />
 
@@ -187,6 +198,7 @@ export function ProjectDetailPage() {
         title={project.name}
         description={project.description}
         overflowActions={[
+          { label: 'Rename', onClick: () => editProjectDialog.open({ title: 'Edit Project' }) },
           { label: 'Delete', variant: 'danger', onClick: () => confirmDialog.open({
             title: 'Delete Project',
             description: 'This will permanently delete this project and all associated data.',
@@ -472,6 +484,9 @@ export function ProjectDetailPage() {
       </FormDialog>
       <FormDialog {...releaseFormDialog.dialogProps} onSubmit={releaseForm.submit}>
         {releaseForm.fields}
+      </FormDialog>
+      <FormDialog {...editProjectDialog.dialogProps} onSubmit={editProjectForm.submit}>
+        {editProjectForm.fields}
       </FormDialog>
       <ConfirmDialog {...confirmDialog.dialogProps} />
     </div>

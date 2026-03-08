@@ -59,8 +59,8 @@ export const tasksApi = {
   addStep: (taskId: string, data: { description: string; verification?: string }) =>
     api.post<Step>(`/tasks/${taskId}/steps`, data),
 
-  updateStep: (stepId: string, status: string) =>
-    api.patch<Step>(`/steps/${stepId}`, { status }),
+  updateStep: (stepId: string, data: string | { status?: string; description?: string; verification?: string }) =>
+    api.patch<Step>(`/steps/${stepId}`, typeof data === 'string' ? { status: data } : data),
 
   deleteStep: (stepId: string) => api.delete(`/steps/${stepId}`),
 

@@ -5,16 +5,19 @@ import { motion, AnimatePresence } from 'motion/react'
 import { activeWorkspaceAtom, projectRefreshAtom } from '@/atoms'
 import { projectsApi } from '@/services'
 import { workspacesApi } from '@/services/workspaces'
+import type { EditProjectFormData } from '@/components/forms/EditProjectForm'
 import { Card, CardContent, Button, EmptyState, Badge, ConfirmDialog, FormDialog, OverflowMenu, PageShell, SelectZone, BulkActionBar, SkeletonCard, ErrorState } from '@/components/ui'
 import { useConfirmDialog, useFormDialog, useToast, useMultiSelect, useWorkspaceSlug } from '@/hooks'
-import { CreateProjectForm } from '@/components/forms'
+import { CreateProjectForm, EditProjectForm } from '@/components/forms'
 import { fadeInUp, staggerContainer, useReducedMotion } from '@/utils/motion'
 import type { Project } from '@/types'
 
 export function ProjectsPage() {
   const confirmDialog = useConfirmDialog()
   const formDialog = useFormDialog()
+  const editDialog = useFormDialog()
   const toast = useToast()
+  const [editingProject, setEditingProject] = useState<Project | null>(null)
   const wsSlug = useWorkspaceSlug()
   const activeWorkspace = useAtomValue(activeWorkspaceAtom)
   const bumpProjectRefresh = useSetAtom(projectRefreshAtom)
@@ -57,6 +60,21 @@ export function ProjectsPage() {
       loadProjects()
     },
   })
+
+  const editForm = EditProjectForm({
+    initialValues: { name: editingProject?.name ?? '', slug: editingProject?.slug, description: editingProject?.description, root_path: editingProject?.root_path },
+    onSubmit: async (data: EditProjectFormData) => {
+      if (!editingProject) return
+      await projectsApi.update(editingProject.slug, data)
+      setProjects(prev => prev.map(p => p.id === editingProject.id ? { ...p, ...data } : p))
+      toast.success('Project updated')
+    },
+  })
+
+  const handleEdit = (project: Project) => {
+    setEditingProject(project)
+    editDialog.open({ title: 'Edit Project' })
+  }
 
   const openCreateDialog = () => {
     formDialog.open({ title: 'Create Project' })
@@ -132,6 +150,7 @@ export function ProjectsPage() {
                     selected={multiSelect.isSelected(project.slug)}
                     onToggleSelect={(shiftKey) => multiSelect.toggle(project.slug, shiftKey)}
                     project={project}
+                    onEdit={() => handleEdit(project)}
                     onDelete={() => confirmDialog.open({
                       title: 'Delete Project',
                       description: 'This will permanently delete this project.',
@@ -159,12 +178,15 @@ export function ProjectsPage() {
       <FormDialog {...formDialog.dialogProps} onSubmit={form.submit}>
         {form.fields}
       </FormDialog>
+      <FormDialog {...editDialog.dialogProps} onSubmit={editForm.submit}>
+        {editForm.fields}
+      </FormDialog>
       <ConfirmDialog {...confirmDialog.dialogProps} />
     </PageShell>
   )
 }
 
-function ProjectCard({ project, onDelete, selected, onToggleSelect, wsSlug }: { project: Project; onDelete: () => void; selected?: boolean; onToggleSelect?: (shiftKey: boolean) => void; wsSlug: string }) {
+function ProjectCard({ project, onEdit, onDelete, selected, onToggleSelect, wsSlug }: { project: Project; onEdit: () => void; onDelete: () => void; selected?: boolean; onToggleSelect?: (shiftKey: boolean) => void; wsSlug: string }) {
   return (
     <Link to={`/workspace/${wsSlug}/projects/${project.slug}`}>
       <Card className={`h-full transition-colors ${selected ? 'border-indigo-500/40 bg-indigo-500/[0.05]' : 'hover:border-indigo-500'}`}>
@@ -179,6 +201,7 @@ function ProjectCard({ project, onDelete, selected, onToggleSelect, wsSlug }: { 
                 <h3 className="text-lg font-semibold text-gray-100 truncate min-w-0">{project.name}</h3>
                 <OverflowMenu
                   actions={[
+                    { label: 'Edit', onClick: () => onEdit() },
                     { label: 'Delete', variant: 'danger', onClick: () => onDelete() },
                   ]}
                 />
