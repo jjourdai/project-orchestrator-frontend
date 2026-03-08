@@ -299,11 +299,11 @@ export function PlanDetailPage() {
 
   const sections = [
     { id: 'overview', label: 'Overview' },
+    ...(graph && (graph.nodes || []).length > 0 ? [{ id: 'graph', label: 'Waves', count: (graph.nodes || []).length }] : []),
     { id: 'tasks', label: 'Tasks', count: tasks.length },
+    { id: 'commits', label: 'Commits', count: commits.length },
     { id: 'constraints', label: 'Constraints', count: constraints.length },
     { id: 'decisions', label: 'Decisions', count: decisions.length },
-    { id: 'commits', label: 'Commits', count: commits.length },
-    ...(graph && (graph.nodes || []).length > 0 ? [{ id: 'graph', label: 'Graph', count: (graph.nodes || []).length }] : []),
   ]
 
   // Build parent links for milestone navigation
@@ -407,6 +407,65 @@ export function PlanDetailPage() {
 
       </section>
 
+      {/* Execution Waves / Dependency Graph */}
+      {graph && (graph.nodes || []).length > 0 && (
+        <section id="graph" className="scroll-mt-20">
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between w-full">
+              <div className="flex items-center gap-3">
+                <CardTitle>{graphViewMode === 'waves' ? 'Execution Waves' : 'Dependency Graph'}</CardTitle>
+                {/* Toggle DAG / Waves */}
+                <div className="flex items-center rounded-lg bg-white/[0.06] p-0.5">
+                  <button
+                    onClick={() => setGraphViewMode('dag')}
+                    className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
+                      graphViewMode === 'dag'
+                        ? 'bg-white/[0.1] text-gray-200 font-medium'
+                        : 'text-gray-500 hover:text-gray-400'
+                    }`}
+                  >
+                    DAG
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (!waves) {
+                        fetchWaves()
+                      } else {
+                        setGraphViewMode('waves')
+                      }
+                    }}
+                    disabled={wavesLoading}
+                    className={`px-2.5 py-1 text-xs rounded-md transition-colors flex items-center gap-1.5 ${
+                      graphViewMode === 'waves'
+                        ? 'bg-white/[0.1] text-gray-200 font-medium'
+                        : 'text-gray-500 hover:text-gray-400'
+                    } ${wavesLoading ? 'opacity-50' : ''}`}
+                  >
+                    <Layers className="w-3 h-3" />
+                    {wavesLoading ? 'Computing...' : 'Waves'}
+                  </button>
+                </div>
+              </div>
+              <span className="text-sm text-gray-500">
+                {graphViewMode === 'waves' && waves
+                  ? `${waves.summary.total_waves} waves · ${waves.summary.total_tasks} tasks`
+                  : `${(graph.nodes || []).length} tasks · ${(graph.edges || []).length} dependencies`
+                }
+              </span>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {graphViewMode === 'waves' && waves ? (
+              <WaveView data={waves} taskStatuses={taskStatusMap} />
+            ) : (
+              <DependencyGraphView graph={graph} taskStatuses={taskStatusMap} />
+            )}
+          </CardContent>
+        </Card>
+        </section>
+      )}
+
       {/* Tasks */}
       <section id="tasks" className="scroll-mt-20">
       <Card>
@@ -467,6 +526,34 @@ export function PlanDetailPage() {
         </CardContent>
       </Card>
 
+      </section>
+
+      {/* Commits */}
+      <section id="commits" className="scroll-mt-20">
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between w-full">
+            <div className="flex items-center gap-2">
+              <GitCommitHorizontal className="w-4 h-4 text-gray-500" />
+              <CardTitle>Commits ({commits.length})</CardTitle>
+            </div>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => { setCommitShaInput(''); commitFormDialog.open({ title: 'Link Commit', submitLabel: 'Link', size: 'sm' }) }}
+            >
+              Link Commit
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {commits.length > 0 ? (
+            <CommitList commits={commits} />
+          ) : (
+            <p className="text-sm text-gray-500 py-4 text-center">No commits linked to this plan yet</p>
+          )}
+        </CardContent>
+      </Card>
       </section>
 
       {/* Constraints & Decisions */}
@@ -552,93 +639,6 @@ export function PlanDetailPage() {
         </Card>
         </section>
       </div>
-
-      {/* Commits */}
-      <section id="commits" className="scroll-mt-20">
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between w-full">
-            <div className="flex items-center gap-2">
-              <GitCommitHorizontal className="w-4 h-4 text-gray-500" />
-              <CardTitle>Commits ({commits.length})</CardTitle>
-            </div>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => { setCommitShaInput(''); commitFormDialog.open({ title: 'Link Commit', submitLabel: 'Link', size: 'sm' }) }}
-            >
-              Link Commit
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {commits.length > 0 ? (
-            <CommitList commits={commits} />
-          ) : (
-            <p className="text-sm text-gray-500 py-4 text-center">No commits linked to this plan yet</p>
-          )}
-        </CardContent>
-      </Card>
-      </section>
-
-      {/* Dependency Graph / Wave View */}
-      {graph && (graph.nodes || []).length > 0 && (
-        <section id="graph" className="scroll-mt-20">
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between w-full">
-              <div className="flex items-center gap-3">
-                <CardTitle>{graphViewMode === 'waves' ? 'Execution Waves' : 'Dependency Graph'}</CardTitle>
-                {/* Toggle DAG / Waves */}
-                <div className="flex items-center rounded-lg bg-white/[0.06] p-0.5">
-                  <button
-                    onClick={() => setGraphViewMode('dag')}
-                    className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
-                      graphViewMode === 'dag'
-                        ? 'bg-white/[0.1] text-gray-200 font-medium'
-                        : 'text-gray-500 hover:text-gray-400'
-                    }`}
-                  >
-                    DAG
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (!waves) {
-                        fetchWaves()
-                      } else {
-                        setGraphViewMode('waves')
-                      }
-                    }}
-                    disabled={wavesLoading}
-                    className={`px-2.5 py-1 text-xs rounded-md transition-colors flex items-center gap-1.5 ${
-                      graphViewMode === 'waves'
-                        ? 'bg-white/[0.1] text-gray-200 font-medium'
-                        : 'text-gray-500 hover:text-gray-400'
-                    } ${wavesLoading ? 'opacity-50' : ''}`}
-                  >
-                    <Layers className="w-3 h-3" />
-                    {wavesLoading ? 'Computing...' : 'Waves'}
-                  </button>
-                </div>
-              </div>
-              <span className="text-sm text-gray-500">
-                {graphViewMode === 'waves' && waves
-                  ? `${waves.summary.total_waves} waves · ${waves.summary.total_tasks} tasks`
-                  : `${(graph.nodes || []).length} tasks · ${(graph.edges || []).length} dependencies`
-                }
-              </span>
-            </div>
-          </CardHeader>
-          <CardContent>
-            {graphViewMode === 'waves' && waves ? (
-              <WaveView data={waves} taskStatuses={taskStatusMap} />
-            ) : (
-              <DependencyGraphView graph={graph} taskStatuses={taskStatusMap} />
-            )}
-          </CardContent>
-        </Card>
-        </section>
-      )}
 
       <FormDialog {...editPlanDialog.dialogProps} onSubmit={editPlanForm.submit}>
         {editPlanForm.fields}
