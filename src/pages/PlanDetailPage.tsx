@@ -9,7 +9,7 @@ import { KanbanBoard } from '@/components/kanban'
 import { useViewMode, useConfirmDialog, useFormDialog, useLinkDialog, useToast, useSectionObserver, useWorkspaceSlug, useViewTransition } from '@/hooks'
 import { workspacePath } from '@/utils/paths'
 import { chatSuggestedProjectIdAtom, planRefreshAtom, taskRefreshAtom, projectRefreshAtom } from '@/atoms'
-import { CreateTaskForm, CreateConstraintForm } from '@/components/forms'
+import { CreateTaskForm, CreateConstraintForm, EditPlanForm } from '@/components/forms'
 import { DependencyGraphView } from '@/components/DependencyGraphView'
 import { WaveView } from '@/components/plans/WaveView'
 import { CommitList } from '@/components/commits'
@@ -39,6 +39,7 @@ export function PlanDetailPage() {
   const taskFormDialog = useFormDialog()
   const constraintFormDialog = useFormDialog()
   const commitFormDialog = useFormDialog()
+  const editPlanDialog = useFormDialog()
   const linkDialog = useLinkDialog()
   const toast = useToast()
   const setSuggestedProjectId = useSetAtom(chatSuggestedProjectIdAtom)
@@ -271,6 +272,15 @@ export function PlanDetailPage() {
   if (error) return <ErrorState title="Failed to load" description={error} onRetry={fetchData} />
   if (loading || !plan) return <LoadingPage />
 
+  const editPlanForm = EditPlanForm({
+    initialValues: { title: plan.title, description: plan.description, priority: plan.priority },
+    onSubmit: async (data) => {
+      await plansApi.update(plan.id, data)
+      setPlan({ ...plan, ...data })
+      toast.success('Plan updated')
+    },
+  })
+
   const tasksByStatus = {
     pending: tasks.filter((t) => t.status === 'pending'),
     in_progress: tasks.filter((t) => t.status === 'in_progress'),
@@ -333,6 +343,7 @@ export function PlanDetailPage() {
           { label: 'Created', value: new Date(plan.created_at).toLocaleDateString() },
         ]}
         overflowActions={[
+          { label: 'Edit', onClick: () => editPlanDialog.open({ title: 'Edit Plan' }) },
           { label: 'Delete', variant: 'danger', onClick: () => confirmDialog.open({
             title: 'Delete Plan',
             description: 'This will permanently delete this plan and all its tasks, steps, decisions, and constraints.',
@@ -621,6 +632,9 @@ export function PlanDetailPage() {
         </section>
       )}
 
+      <FormDialog {...editPlanDialog.dialogProps} onSubmit={editPlanForm.submit}>
+        {editPlanForm.fields}
+      </FormDialog>
       <FormDialog {...taskFormDialog.dialogProps} onSubmit={taskForm.submit}>
         {taskForm.fields}
       </FormDialog>

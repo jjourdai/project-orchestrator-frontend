@@ -35,6 +35,9 @@ export const plansApi = {
 
   create: (data: CreatePlanRequest) => api.post<Plan>('/plans', data),
 
+  update: (planId: string, data: { title?: string; description?: string; priority?: number; status?: string }) =>
+    api.patch<Plan>(`/plans/${planId}`, data),
+
   updateStatus: (planId: string, status: string) =>
     api.patch<Plan>(`/plans/${planId}`, { status }),
 
