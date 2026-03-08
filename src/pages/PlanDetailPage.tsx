@@ -269,17 +269,18 @@ export function PlanDetailPage() {
     [tasks],
   )
 
-  if (error) return <ErrorState title="Failed to load" description={error} onRetry={fetchData} />
-  if (loading || !plan) return <LoadingPage />
-
   const editPlanForm = EditPlanForm({
-    initialValues: { title: plan.title, description: plan.description, priority: plan.priority },
+    initialValues: { title: plan?.title ?? '', description: plan?.description, priority: plan?.priority },
     onSubmit: async (data) => {
+      if (!plan) return
       await plansApi.update(plan.id, data)
       setPlan({ ...plan, ...data })
       toast.success('Plan updated')
     },
   })
+
+  if (error) return <ErrorState title="Failed to load" description={error} onRetry={fetchData} />
+  if (loading || !plan) return <LoadingPage />
 
   const tasksByStatus = {
     pending: tasks.filter((t) => t.status === 'pending'),

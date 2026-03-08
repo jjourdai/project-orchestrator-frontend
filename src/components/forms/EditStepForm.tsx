@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Input, Textarea } from '@/components/ui'
 
 export interface EditStepFormData {
@@ -16,6 +16,12 @@ export function EditStepForm({ initialValues, onSubmit, loading }: Props) {
   const [description, setDescription] = useState(initialValues.description)
   const [verification, setVerification] = useState(initialValues.verification ?? '')
   const [errors, setErrors] = useState<Record<string, string>>({})
+
+  useEffect(() => {
+    setDescription(initialValues.description)
+    setVerification(initialValues.verification ?? '')
+    setErrors({})
+  }, [initialValues.description, initialValues.verification])
 
   const validate = () => {
     const errs: Record<string, string> = {}

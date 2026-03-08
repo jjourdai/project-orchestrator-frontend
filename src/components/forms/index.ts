@@ -1,5 +1,6 @@
 export { CreateWorkspaceForm } from './CreateWorkspaceForm'
 export { EditWorkspaceForm } from './EditWorkspaceForm'
+export { EditProjectForm } from './EditProjectForm'
 export { EditPlanForm } from './EditPlanForm'
 export { EditTaskForm } from './EditTaskForm'
 export { EditStepForm } from './EditStepForm'

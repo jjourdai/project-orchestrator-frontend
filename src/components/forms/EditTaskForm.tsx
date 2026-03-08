@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Input, Textarea } from '@/components/ui'
 
 export interface EditTaskFormData {
@@ -18,6 +18,13 @@ export function EditTaskForm({ initialValues, onSubmit, loading }: Props) {
   const [description, setDescription] = useState(initialValues.description ?? '')
   const [priority, setPriority] = useState(String(initialValues.priority ?? 5))
   const [errors, setErrors] = useState<Record<string, string>>({})
+
+  useEffect(() => {
+    setTitle(initialValues.title ?? '')
+    setDescription(initialValues.description ?? '')
+    setPriority(String(initialValues.priority ?? 5))
+    setErrors({})
+  }, [initialValues.title, initialValues.description, initialValues.priority])
 
   const validate = () => {
     const errs: Record<string, string> = {}

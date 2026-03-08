@@ -194,26 +194,28 @@ export function TaskDetailPage() {
   const sectionIds = ['steps', 'dependencies', 'decisions', 'commits']
   const activeSection = useSectionObserver(sectionIds)
 
-  if (error) return <ErrorState title="Failed to load" description={error} onRetry={fetchData} />
-  if (loading || !task) return <LoadingPage />
-
-  const editStepForm = editingStep ? EditStepForm({
-    initialValues: { description: editingStep.description, verification: editingStep.verification },
+  const editStepForm = EditStepForm({
+    initialValues: { description: editingStep?.description ?? '', verification: editingStep?.verification },
     onSubmit: async (data) => {
+      if (!editingStep) return
       await tasksApi.updateStep(editingStep.id, data)
       setSteps(prev => prev.map(s => s.id === editingStep.id ? { ...s, ...data } : s))
       toast.success('Step updated')
     },
-  }) : null
+  })
 
   const editTaskForm = EditTaskForm({
-    initialValues: { title: task.title, description: task.description, priority: task.priority },
+    initialValues: { title: task?.title, description: task?.description, priority: task?.priority },
     onSubmit: async (data) => {
+      if (!task) return
       await tasksApi.update(task.id, data)
       setTask({ ...task, ...data })
       toast.success('Task updated')
     },
   })
+
+  if (error) return <ErrorState title="Failed to load" description={error} onRetry={fetchData} />
+  if (loading || !task) return <LoadingPage />
 
   // Use state variables for arrays
   const tags = task.tags || []
@@ -538,11 +540,9 @@ export function TaskDetailPage() {
       </Card>
       </section>
 
-      {editStepForm && (
-        <FormDialog {...editStepDialog.dialogProps} onSubmit={editStepForm.submit}>
-          {editStepForm.fields}
-        </FormDialog>
-      )}
+      <FormDialog {...editStepDialog.dialogProps} onSubmit={editStepForm.submit}>
+        {editStepForm.fields}
+      </FormDialog>
       <FormDialog {...editTaskDialog.dialogProps} onSubmit={editTaskForm.submit}>
         {editTaskForm.fields}
       </FormDialog>
