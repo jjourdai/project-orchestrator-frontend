@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useLayoutEffect } from 'react'
 import { Outlet, useParams, Navigate } from 'react-router-dom'
 import { useSetAtom, useAtomValue } from 'jotai'
 import { activeWorkspaceSlugAtom, workspacesAtom } from '@/atoms'
@@ -18,7 +18,10 @@ export function WorkspaceRouteGuard() {
   const workspaces = useAtomValue(workspacesAtom)
 
   // Sync URL slug → atom (URL is always source of truth)
-  useEffect(() => {
+  // useLayoutEffect ensures the atom is updated BEFORE paint,
+  // so all atom consumers (ChatPanel, SessionList, ProjectSelect)
+  // see the new slug in the same render cycle as URL-param readers.
+  useLayoutEffect(() => {
     if (slug) {
       setActiveSlug(slug)
     }
