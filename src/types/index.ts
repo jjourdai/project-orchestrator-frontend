@@ -1251,6 +1251,7 @@ export interface UpdateTaskRequest {
   assigned_to?: string
   priority?: number
   tags?: string[]
+  estimated_complexity?: number
   actual_complexity?: number
 }
 

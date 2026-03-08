@@ -205,7 +205,7 @@ export function TaskDetailPage() {
   })
 
   const editTaskForm = EditTaskForm({
-    initialValues: { title: task?.title, description: task?.description, priority: task?.priority },
+    initialValues: { title: task?.title, description: task?.description, priority: task?.priority, estimated_complexity: task?.estimated_complexity, tags: task?.tags },
     onSubmit: async (data) => {
       if (!task) return
       await tasksApi.update(task.id, data)
