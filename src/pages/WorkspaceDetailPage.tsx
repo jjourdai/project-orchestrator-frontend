@@ -7,7 +7,7 @@ import { workspacesApi, projectsApi } from '@/services'
 import { useFormDialog, useLinkDialog, useToast, useConfirmDialog, useSectionObserver, useWorkspaceSlug } from '@/hooks'
 import { workspacePath } from '@/utils/paths'
 import { workspaceRefreshAtom, projectRefreshAtom, milestoneRefreshAtom, taskRefreshAtom } from '@/atoms'
-import { CreateMilestoneForm, CreateResourceForm, CreateComponentForm } from '@/components/forms'
+import { CreateMilestoneForm, CreateResourceForm, CreateComponentForm, EditWorkspaceForm } from '@/components/forms'
 import {
   IntelHealthBreakdown,
   IntelLayerCards,
@@ -34,6 +34,7 @@ interface WorkspaceOverviewResponse {
 export function WorkspaceDetailPage() {
   const slug = useWorkspaceSlug()
   const navigate = useNavigate()
+  const editWorkspaceDialog = useFormDialog()
   const milestoneFormDialog = useFormDialog()
   const resourceFormDialog = useFormDialog()
   const componentFormDialog = useFormDialog()
@@ -125,6 +126,16 @@ export function WorkspaceDetailPage() {
     },
   })
 
+  const editWorkspaceForm = EditWorkspaceForm({
+    initialValues: { name: workspace?.name ?? '', description: workspace?.description },
+    onSubmit: async (data) => {
+      if (!slug) return
+      const updated = await workspacesApi.update(slug, data)
+      setWorkspace(updated)
+      toast.success('Workspace renamed')
+    },
+  })
+
   // Workspace intelligence data (aggregated across all projects)
   const intelligence = useWorkspaceIntelligenceData(slug ?? '')
   const intelReady = !intelligence.loading && !intelligence.error && !!intelligence.summary
@@ -150,6 +161,10 @@ export function WorkspaceDetailPage() {
         title={workspace.name}
         description={workspace.description}
         overflowActions={[
+          {
+            label: 'Rename workspace',
+            onClick: () => editWorkspaceDialog.open({ title: 'Rename Workspace' }),
+          },
           {
             label: 'Delete workspace',
             variant: 'danger',
@@ -477,6 +492,9 @@ export function WorkspaceDetailPage() {
         </section>
       </div>
 
+      <FormDialog {...editWorkspaceDialog.dialogProps} onSubmit={editWorkspaceForm.submit}>
+        {editWorkspaceForm.fields}
+      </FormDialog>
       <FormDialog {...milestoneFormDialog.dialogProps} onSubmit={milestoneForm.submit}>
         {milestoneForm.fields}
       </FormDialog>
