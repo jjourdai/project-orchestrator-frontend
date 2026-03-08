@@ -39,6 +39,7 @@ export function WorkspaceDetailPage() {
   const resourceFormDialog = useFormDialog()
   const componentFormDialog = useFormDialog()
   const linkDialog = useLinkDialog()
+  const moveDialog = useLinkDialog()
   const confirmDialog = useConfirmDialog()
   const toast = useToast()
   const workspaceRefresh = useAtomValue(workspaceRefreshAtom)
@@ -355,6 +356,32 @@ export function WorkspaceDetailPage() {
                   <div className="flex items-center gap-2 shrink-0">
                     <span className="text-xs text-gray-500 hidden sm:inline">{project.slug}</span>
                     <button
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        moveDialog.open({
+                          title: `Move "${project.name}" to workspace`,
+                          submitLabel: 'Move',
+                          fetchOptions: async () => {
+                            const allWorkspaces = await workspacesApi.list()
+                            return (allWorkspaces.items || [])
+                              .filter(w => w.slug !== workspace.slug)
+                              .map(w => ({ value: w.slug, label: w.name, description: w.slug }))
+                          },
+                          onLink: async (targetSlug) => {
+                            await workspacesApi.removeProject(workspace.slug, project.id)
+                            await workspacesApi.addProject(targetSlug, project.id)
+                            setProjects(prev => prev.filter(p => p.id !== project.id))
+                            toast.success(`Project moved to ${targetSlug}`)
+                          },
+                        })
+                      }}
+                      className="text-gray-500 hover:text-indigo-400 text-xs px-1"
+                      title="Move to another workspace"
+                    >
+                      Move
+                    </button>
+                    <button
                       onClick={async (e) => {
                         e.preventDefault()
                         e.stopPropagation()
@@ -508,6 +535,7 @@ export function WorkspaceDetailPage() {
         {componentForm.fields}
       </FormDialog>
       <LinkEntityDialog {...linkDialog.dialogProps} />
+      <LinkEntityDialog {...moveDialog.dialogProps} />
       <ConfirmDialog {...confirmDialog.dialogProps} />
     </div>
   )
