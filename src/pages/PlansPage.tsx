@@ -21,10 +21,12 @@ import {
   SkeletonCard,
 } from '@/components/ui'
 import { useViewMode, useConfirmDialog, useFormDialog, useToast, useMultiSelect, useInfiniteList, useWorkspaceSlug, useViewTransition } from '@/hooks'
-import { CreatePlanForm } from '@/components/forms'
+import { CreatePlanForm, EditPlanForm } from '@/components/forms'
+import type { EditPlanFormData } from '@/components/forms/EditPlanForm'
 import { PlanKanbanBoard, PlanKanbanFilterBar } from '@/components/kanban'
 import type { PlanKanbanFilters } from '@/components/kanban'
 import { fadeInUp, staggerContainer, useReducedMotion } from '@/utils/motion'
+import { useState } from 'react'
 import type { Plan, PlanStatus, PaginatedResponse } from '@/types'
 
 const statusOptions = [
@@ -55,8 +57,10 @@ export function PlansPage() {
   const { navigate } = useViewTransition()
   const confirmDialog = useConfirmDialog()
   const formDialog = useFormDialog()
+  const editDialog = useFormDialog()
   const toast = useToast()
   const wsSlug = useWorkspaceSlug()
+  const [editingPlan, setEditingPlan] = useState<Plan | null>(null)
 
   // Kanban filters (workspace filter removed — implicit via wsSlug)
   const [kanbanFilters, setKanbanFilters] = useState<PlanKanbanFilters>(defaultFilters)
@@ -207,6 +211,24 @@ export function PlansPage() {
     },
   })
 
+  const editForm = EditPlanForm({
+    initialValues: { title: editingPlan?.title ?? '', description: editingPlan?.description, priority: editingPlan?.priority },
+    onSubmit: async (data: EditPlanFormData) => {
+      if (!editingPlan) return
+      await plansApi.update(editingPlan.id, data)
+      updateItem(
+        (p) => p.id === editingPlan.id,
+        (p) => ({ ...p, ...data }),
+      )
+      toast.success('Plan updated')
+    },
+  })
+
+  const handleEditPlan = (plan: Plan) => {
+    setEditingPlan(plan)
+    editDialog.open({ title: 'Edit Plan' })
+  }
+
   const multiSelect = useMultiSelect(plans, (p) => p.id)
 
   const handleBulkDelete = () => {
@@ -314,6 +336,7 @@ export function PlansPage() {
                     selected={multiSelect.isSelected(plan.id)}
                     onToggleSelect={(shiftKey) => multiSelect.toggle(plan.id, shiftKey)}
                     plan={plan}
+                    onEdit={() => handleEditPlan(plan)}
                     onStatusChange={async (newStatus) => {
                       await plansApi.updateStatus(plan.id, newStatus)
                       updateItem(
@@ -350,6 +373,9 @@ export function PlansPage() {
       <FormDialog {...formDialog.dialogProps} onSubmit={planForm.submit}>
         {planForm.fields}
       </FormDialog>
+      <FormDialog {...editDialog.dialogProps} onSubmit={editForm.submit}>
+        {editForm.fields}
+      </FormDialog>
       <ConfirmDialog {...confirmDialog.dialogProps} />
     </PageShell>
   )
@@ -365,6 +391,7 @@ const planStatusBarColor: Record<PlanStatus, string> = {
 
 function PlanCard({
   plan,
+  onEdit,
   onStatusChange,
   onDelete,
   selected,
@@ -372,6 +399,7 @@ function PlanCard({
   wsSlug,
 }: {
   plan: Plan
+  onEdit: () => void
   onStatusChange: (status: PlanStatus) => Promise<void>
   onDelete: () => void
   selected?: boolean
@@ -401,6 +429,7 @@ function PlanCard({
               </div>
               <OverflowMenu
                 actions={[
+                  { label: 'Edit', onClick: () => onEdit() },
                   { label: 'Delete', variant: 'danger', onClick: () => onDelete() },
                 ]}
               />
