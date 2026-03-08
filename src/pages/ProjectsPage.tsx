@@ -62,7 +62,7 @@ export function ProjectsPage() {
   })
 
   const editForm = EditProjectForm({
-    initialValues: { name: editingProject?.name ?? '', description: editingProject?.description },
+    initialValues: { name: editingProject?.name ?? '', slug: editingProject?.slug, description: editingProject?.description, root_path: editingProject?.root_path },
     onSubmit: async (data: EditProjectFormData) => {
       if (!editingProject) return
       await projectsApi.update(editingProject.slug, data)

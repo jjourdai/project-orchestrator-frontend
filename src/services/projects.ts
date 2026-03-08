@@ -31,7 +31,7 @@ export const projectsApi = {
   create: (data: CreateProjectRequest) =>
     api.post<Project>('/projects', data),
 
-  update: (slug: string, data: { name?: string; description?: string | null }) =>
+  update: (slug: string, data: { name?: string; description?: string | null; root_path?: string }) =>
     api.patch<void>(`/projects/${slug}`, data),
 
   delete: (slug: string) => api.delete(`/projects/${slug}`),

@@ -166,7 +166,7 @@ export function ProjectDetailPage() {
   const activeSection = useSectionObserver(sectionIds)
 
   const editProjectForm = EditProjectForm({
-    initialValues: { name: project?.name ?? '', description: project?.description },
+    initialValues: { name: project?.name ?? '', slug: project?.slug, description: project?.description, root_path: project?.root_path },
     onSubmit: async (data) => {
       if (!project) return
       await projectsApi.update(project.slug, data)
