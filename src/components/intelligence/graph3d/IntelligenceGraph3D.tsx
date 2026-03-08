@@ -12,7 +12,7 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import * as THREE from 'three'
 
 import { useGraph3DLayout, type Graph3DNode, type Graph3DLink } from './useGraph3DLayout'
-import { createNodeObject } from './nodeObjects'
+import { createNodeObject, disposeNodeCaches } from './nodeObjects'
 import { ENTITY_COLORS } from '@/constants/intelligence'
 import {
   selectedNodeIdAtom,
@@ -92,6 +92,11 @@ export default function IntelligenceGraph3D({ nodes, edges }: IntelligenceGraph3
 
   const { transformToGraph3D, savePositions } = useGraph3DLayout()
 
+  // ── Cleanup cached Three.js resources on unmount ────────────────────────
+  useEffect(() => {
+    return () => disposeNodeCaches()
+  }, [])
+
   // ── Container sizing ────────────────────────────────────────────────────
   useEffect(() => {
     const el = containerRef.current
@@ -114,6 +119,25 @@ export default function IntelligenceGraph3D({ nodes, edges }: IntelligenceGraph3
     }
 
     return () => observer.disconnect()
+  }, [])
+
+  // ── Workaround: three.js OrbitControls + DragControls pointercancel crash ──
+  // When DragControls dispatches pointercancel, OrbitControls.onPointerUp tries
+  // to read .x from a pointer already removed from its internal Map → TypeError.
+  // We patch the renderer's domElement to catch this race condition.
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+
+    const handlePointerCancel = (e: PointerEvent) => {
+      // Prevent the pointercancel from reaching OrbitControls.onPointerUp
+      // which crashes when the pointer is already gone from its tracking Map
+      e.stopPropagation()
+    }
+
+    // Use capture phase to intercept before three.js handlers
+    el.addEventListener('pointercancel', handlePointerCancel, true)
+    return () => el.removeEventListener('pointercancel', handlePointerCancel, true)
   }, [])
 
   // ── Transform data ──────────────────────────────────────────────────────
@@ -323,7 +347,7 @@ export default function IntelligenceGraph3D({ nodes, edges }: IntelligenceGraph3
   // Dirty tracking: materials we've modified + lights we've added
   // This survives across renders and doesn't depend on graphData.nodes
   const dirtyRef = useRef<{
-    materials: Map<THREE.MeshPhongMaterial, { emissive: string; emissiveIntensity: number; opacity: number }>
+    materials: Map<THREE.MeshLambertMaterial, { emissive: string; emissiveIntensity: number; opacity: number }>
     lights: Set<THREE.PointLight>
     // Track what state each node was last set to, for diff-based updates
     nodeStates: Map<string, 'direct' | 'propagated' | 'dimmed'>
@@ -405,7 +429,7 @@ export default function IntelligenceGraph3D({ nodes, edges }: IntelligenceGraph3
 
       // ── Material updates ──
       obj.traverse((child) => {
-        if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshPhongMaterial) {
+        if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshLambertMaterial) {
           const mat = child.material
 
           // Save original on first touch (track in ref, not on userData)
@@ -442,7 +466,7 @@ export default function IntelligenceGraph3D({ nodes, edges }: IntelligenceGraph3
 
   // ── Heatmap overlays — energy (notes) & churn (files) ────────────────────
   // Same ref-tracked pattern: save originals, mutate, restore on toggle off.
-  const heatmapDirtyRef = useRef<Map<THREE.MeshPhongMaterial, { emissive: string; emissiveIntensity: number; opacity: number }>>(new Map())
+  const heatmapDirtyRef = useRef<Map<THREE.MeshLambertMaterial, { emissive: string; emissiveIntensity: number; opacity: number }>>(new Map())
 
   useEffect(() => {
     const fg = graphRef.current
@@ -492,7 +516,7 @@ export default function IntelligenceGraph3D({ nodes, edges }: IntelligenceGraph3
         const heatColor = energyToColor3(energy)
 
         obj.traverse((child) => {
-          if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshPhongMaterial) {
+          if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshLambertMaterial) {
             const mat = child.material
             if (!hDirty.has(mat)) {
               hDirty.set(mat, {
@@ -516,7 +540,7 @@ export default function IntelligenceGraph3D({ nodes, edges }: IntelligenceGraph3
         const heatColor = churnToColor3(churn)
 
         obj.traverse((child) => {
-          if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshPhongMaterial) {
+          if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshLambertMaterial) {
             const mat = child.material
             if (!hDirty.has(mat)) {
               hDirty.set(mat, {
@@ -534,7 +558,7 @@ export default function IntelligenceGraph3D({ nodes, edges }: IntelligenceGraph3
       } else if (isAnyHeatmap && !isNote && !isFile) {
         // Dim unrelated nodes when a heatmap is active
         obj.traverse((child) => {
-          if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshPhongMaterial) {
+          if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshLambertMaterial) {
             const mat = child.material
             if (!hDirty.has(mat)) {
               hDirty.set(mat, {
@@ -619,7 +643,7 @@ export default function IntelligenceGraph3D({ nodes, edges }: IntelligenceGraph3
       const prevObj = (prevNode as Graph3DNode & { __threeObj?: THREE.Object3D } | undefined)?.__threeObj
       if (prevObj) {
         prevObj.traverse((child) => {
-          if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshPhongMaterial) {
+          if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshLambertMaterial) {
             const baseColor = ENTITY_COLORS[prevNode!.entityType as keyof typeof ENTITY_COLORS] ?? '#6B7280'
             const energy = (prevNode!.data.energy as number) ?? 0
             child.material.emissive = new THREE.Color(baseColor)
@@ -637,7 +661,7 @@ export default function IntelligenceGraph3D({ nodes, edges }: IntelligenceGraph3
       const selObj = (selNode as Graph3DNode & { __threeObj?: THREE.Object3D } | undefined)?.__threeObj
       if (selObj) {
         selObj.traverse((child) => {
-          if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshPhongMaterial) {
+          if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshLambertMaterial) {
             child.material.emissive = new THREE.Color(HIGHLIGHT_COLOR_SELECT)
             child.material.emissiveIntensity = 0.7
             child.material.opacity = 1.0
