@@ -30,17 +30,29 @@ export function AuthCallbackPage() {
 
   // Derive missing code error from search params (avoids synchronous setState in effect)
   const code = useMemo(() => searchParams.get('code'), [searchParams])
-  const error = code ? exchangeError : 'Missing authorization code'
+  // Capture OIDC provider errors (e.g. Cognito sends ?error=...&error_description=...)
+  const providerError = useMemo(() => {
+    const err = searchParams.get('error')
+    const desc = searchParams.get('error_description')
+    if (err) return desc ? `${err}: ${desc}` : err
+    return null
+  }, [searchParams])
+  const error = providerError ?? (code ? exchangeError : 'Missing authorization code')
 
   useEffect(() => {
     if (!code) return
 
     let cancelled = false
 
-    // Try generic OIDC first, fall back to legacy Google
+    // Try generic OIDC first, fall back to legacy Google only if OIDC is not configured (403)
     authApi
       .exchangeOidcCode(code)
-      .catch(() => authApi.exchangeCode(code))
+      .catch((oidcErr: Error & { status?: number }) => {
+        // Only fall back to legacy Google if OIDC endpoint returned 403 (not configured).
+        // For real OIDC errors (token exchange, userinfo, scope), surface them directly.
+        if (oidcErr.status === 403) return authApi.exchangeCode(code)
+        throw oidcErr
+      })
       .then(({ token, user }) => {
         if (cancelled) return
         setAuthToken(token) // Module-level cache for api.ts Bearer header
