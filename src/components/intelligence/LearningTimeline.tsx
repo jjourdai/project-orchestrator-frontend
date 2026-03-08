@@ -1070,6 +1070,58 @@ export default function LearningTimeline(props: LearningTimelineProps) {
 
   if (error) return <ErrorState description={error} onRetry={handleRefresh} />
 
+  // ── Empty state — no events yet ──────────────────────────────────────
+  if (events.length === 0) {
+    return (
+      <div className="py-6 max-w-4xl mx-auto">
+        {!props.embedded && (
+          <div className="flex items-center gap-2 mb-6">
+            <button
+              onClick={() => navigate(workspacePath(wsSlug, `/projects/${projectSlug}/intelligence`))}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-300 hover:bg-slate-800 transition-colors"
+            >
+              <ArrowLeft size={14} />
+              Dashboard
+            </button>
+          </div>
+        )}
+        <Card>
+          <CardContent className="py-12">
+            <div className="flex flex-col items-center gap-4 text-slate-500">
+              <div className="w-16 h-16 rounded-full bg-cyan-500/5 flex items-center justify-center">
+                <Calendar size={32} className="text-slate-600" />
+              </div>
+              <div className="text-center">
+                <p className="text-sm font-medium text-slate-300 mb-1">No knowledge events yet</p>
+                <p className="text-xs text-slate-500 max-w-sm">
+                  The timeline will populate as your project builds intelligence. To get started:
+                </p>
+              </div>
+              <div className="flex flex-col gap-2 text-xs text-slate-500 mt-1">
+                <div className="flex items-center gap-2">
+                  <StickyNote size={12} className="text-blue-400 shrink-0" />
+                  <span>Create <strong className="text-slate-400">notes</strong> to capture knowledge and guidelines</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Scale size={12} className="text-violet-400 shrink-0" />
+                  <span>Record <strong className="text-slate-400">decisions</strong> to document architectural choices</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Sparkles size={12} className="text-pink-400 shrink-0" />
+                  <span>Run <strong className="text-slate-400">skill detection</strong> from the Intelligence Dashboard</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Workflow size={12} className="text-orange-400 shrink-0" />
+                  <span>Execute <strong className="text-slate-400">protocols</strong> to generate activity traces</span>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
   const startDate = new Date(dateRange.start)
   const endDate = new Date(dateRange.end)
 
