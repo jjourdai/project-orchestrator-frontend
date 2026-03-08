@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useMemo } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import dagre from 'dagre'
 import type {
   IntelligenceNode,
   IntelligenceEdge,
@@ -18,63 +17,49 @@ import {
   intelligenceSummaryAtom,
   intelligenceSummaryLoadingAtom,
   visibleNodesAtom,
-  visibleEdgesAtom,
+  budgetedEdgesAtom,
+  hiddenEdgeCountAtom,
   selectedNodeIdAtom,
   visibleLayersAtom,
   visibilityModeAtom,
+  graphNodeLimitAtom,
+  loadingLayersAtom,
 } from '@/atoms/intelligence'
 import { intelligenceApi } from '@/services/intelligence'
 import { VISIBILITY_PRESETS } from '@/constants/intelligence'
 import type { VisibilityMode } from '@/types/intelligence'
 
-// ── Dagre layout ─────────────────────────────────────────────────────────────
+// ── Dagre Web Worker ─────────────────────────────────────────────────────────
 
-function layoutGraph(
-  nodes: IntelligenceNode[],
-  edges: IntelligenceEdge[],
-): { nodes: IntelligenceNode[]; edges: IntelligenceEdge[] } {
-  if (nodes.length === 0) return { nodes, edges }
+/** Lazily create a single shared worker instance */
+let sharedWorker: Worker | null = null
+function getDagreWorker(): Worker {
+  if (!sharedWorker) {
+    sharedWorker = new Worker(
+      new URL('@/workers/dagreWorker.ts', import.meta.url),
+      { type: 'module' },
+    )
+  }
+  return sharedWorker
+}
 
-  const g = new dagre.graphlib.Graph()
-  g.setDefaultEdgeLabel(() => ({}))
-  g.setGraph({ rankdir: 'TB', nodesep: 40, ranksep: 60, marginx: 30, marginy: 30 })
-
-  nodes.forEach((node) => {
+/**
+ * Serialize ReactFlow nodes into the minimal {id, width, height} the worker expects.
+ * Also pre-computes the size lookup so the worker doesn't need NODE_SIZES.
+ */
+function serializeForWorker(nodes: IntelligenceNode[]) {
+  return nodes.map((node) => {
     const entityType = (node.data as { entityType?: string }).entityType ?? 'file'
     const size = NODE_SIZES[entityType as keyof typeof NODE_SIZES] ?? { width: 32, height: 32 }
-    g.setNode(node.id, { width: size.width + 20, height: size.height + 20 })
+    return { id: node.id, width: size.width + 20, height: size.height + 20 }
   })
-
-  edges.forEach((edge) => {
-    if (g.hasNode(edge.source) && g.hasNode(edge.target)) {
-      g.setEdge(edge.source, edge.target)
-    }
-  })
-
-  dagre.layout(g)
-
-  const layoutedNodes = nodes.map((node) => {
-    const pos = g.node(node.id)
-    if (!pos) return node
-    const entityType = (node.data as { entityType?: string }).entityType ?? 'file'
-    const size = NODE_SIZES[entityType as keyof typeof NODE_SIZES] ?? { width: 32, height: 32 }
-    return {
-      ...node,
-      position: {
-        x: pos.x - size.width / 2,
-        y: pos.y - size.height / 2,
-      },
-    }
-  })
-
-  return { nodes: layoutedNodes, edges }
 }
 
 // ── Transform backend data → ReactFlow ───────────────────────────────────────
 
 /** Map backend layer string to our IntelligenceLayer type */
 function mapLayer(layer: string): IntelligenceLayer {
-  const valid: IntelligenceLayer[] = ['code', 'pm', 'knowledge', 'fabric', 'neural', 'skills']
+  const valid: IntelligenceLayer[] = ['code', 'pm', 'knowledge', 'fabric', 'neural', 'skills', 'behavioral']
   return valid.includes(layer as IntelligenceLayer)
     ? (layer as IntelligenceLayer)
     : 'code'
@@ -124,7 +109,7 @@ function toReactFlowEdge(edge: BackendGraphEdge, index: number): IntelligenceEdg
   const attrs = edge.attributes ?? {}
 
   return {
-    id: `e-${edge.source}-${edge.target}-${index}`,
+    id: `e|${edge.source}|${edge.target}|${index}`,
     source: edge.source,
     target: edge.target,
     type: edgeType,
@@ -159,36 +144,77 @@ export function useIntelligenceGraph(projectSlug: string | undefined) {
   const [selectedNodeId, setSelectedNodeId] = useAtom(selectedNodeIdAtom)
   const [visibleLayers, setVisibleLayers] = useAtom(visibleLayersAtom)
   const setVisibilityMode = useSetAtom(visibilityModeAtom)
+  const nodeLimit = useAtomValue(graphNodeLimitAtom)
+  const setLoadingLayers = useSetAtom(loadingLayersAtom)
 
   const visibleNodes = useAtomValue(visibleNodesAtom)
-  const visibleEdges = useAtomValue(visibleEdgesAtom)
+  const visibleEdges = useAtomValue(budgetedEdgesAtom)
+  const hiddenEdgeCount = useAtomValue(hiddenEdgeCountAtom)
 
-  // Fetch graph data — request all layers
-  const fetchGraph = useCallback(async () => {
-    if (!projectSlug) return
+  // Track which layers have already been fetched to avoid redundant calls
+  const fetchedLayersRef = useRef<Set<string>>(new Set())
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Fetch graph data — only request the specified layers
+  const fetchGraphForLayers = useCallback(async (layers: string[], limit: number) => {
+    if (!projectSlug || layers.length === 0) return
     setLoading(true)
     setError(null)
+    // Track per-layer loading state for UI indicators
+    setLoadingLayers((prev: Set<string>) => {
+      const next = new Set(prev)
+      layers.forEach((l) => next.add(l))
+      return next
+    })
     try {
-      const data = await intelligenceApi.getGraph(projectSlug, {
-        layers: ['code', 'knowledge', 'fabric', 'neural', 'skills'],
-      })
-      // DEBUG — remove after diagnosis
-      console.log('[useIntelligenceGraph] slug:', projectSlug, '→', data.nodes.length, 'nodes,', data.edges.length, 'edges, stats:', data.stats)
-      if (data.nodes.length === 0) {
-        console.warn('[useIntelligenceGraph] API returned 0 nodes — raw response:', data)
-      }
+      const data = await intelligenceApi.getGraph(projectSlug, { layers, limit })
+
       const rfNodes = data.nodes.map(toReactFlowNode)
       const rfEdges = data.edges.map(toReactFlowEdge)
-      const layouted = layoutGraph(rfNodes, rfEdges)
-      setNodes(layouted.nodes)
-      setEdges(layouted.edges)
+
+      // Merge with existing data (for incremental layer loading)
+      // or replace entirely (for initial load / slug change)
+      setNodes((prev) => {
+        if (prev.length === 0) return rfNodes
+        // Remove old nodes from the fetched layers, then add new ones
+        const fetchedLayerSet = new Set(layers)
+        const kept = prev.filter((n) => {
+          const layer = (n.data as { layer?: string }).layer
+          return layer ? !fetchedLayerSet.has(layer) : true
+        })
+        return [...kept, ...rfNodes]
+      })
+      setEdges((prev) => {
+        if (prev.length === 0) return rfEdges
+        const fetchedLayerSet = new Set(layers)
+        const kept = prev.filter((e) => {
+          const layer = (e.data as { layer?: string })?.layer
+          return layer ? !fetchedLayerSet.has(layer) : true
+        })
+        return [...kept, ...rfEdges]
+      })
+
+      // Mark these layers as fetched
+      layers.forEach((l) => fetchedLayersRef.current.add(l))
     } catch (err) {
       console.error('[useIntelligenceGraph] fetch error:', err)
       setError(err instanceof Error ? err.message : 'Failed to load graph')
     } finally {
       setLoading(false)
+      setLoadingLayers((prev: Set<string>) => {
+        const next = new Set(prev)
+        layers.forEach((l) => next.delete(l))
+        return next
+      })
     }
-  }, [projectSlug, setNodes, setEdges, setLoading, setError])
+  }, [projectSlug, setNodes, setEdges, setLoading, setError, setLoadingLayers])
+
+  // Public fetchGraph — fetches all currently visible layers
+  const fetchGraph = useCallback(async () => {
+    const layers = Array.from(visibleLayers) as string[]
+    fetchedLayersRef.current.clear()
+    await fetchGraphForLayers(layers, nodeLimit)
+  }, [visibleLayers, nodeLimit, fetchGraphForLayers])
 
   // Fetch summary
   const fetchSummary = useCallback(async () => {
@@ -204,11 +230,46 @@ export function useIntelligenceGraph(projectSlug: string | undefined) {
     }
   }, [projectSlug, setSummary, setSummaryLoading])
 
-  // Load on mount
+  // Load on mount / slug change — progressive: code layer first for fast first paint
   useEffect(() => {
-    fetchGraph()
+    fetchedLayersRef.current.clear()
+    setNodes([])
+    setEdges([])
+    const layers = Array.from(visibleLayers) as string[]
+
+    // Progressive loading: fetch primary layer first (code), then remaining layers.
+    // This gives a fast first paint (~200 file nodes) while other layers load in background.
+    const primary = layers.filter((l) => l === 'code' || l === 'fabric')
+    const rest = layers.filter((l) => l !== 'code' && l !== 'fabric')
+
+    if (primary.length > 0 && rest.length > 0) {
+      fetchGraphForLayers(primary, nodeLimit).then(() => {
+        fetchGraphForLayers(rest, nodeLimit)
+      })
+    } else {
+      fetchGraphForLayers(layers, nodeLimit)
+    }
     fetchSummary()
-  }, [fetchGraph, fetchSummary])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only on slug change
+  }, [projectSlug])
+
+  // Re-fetch when visible layers change — debounced 300ms to handle rapid preset switching
+  // Only fetches layers that haven't been loaded yet (incremental)
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => {
+      const needed = Array.from(visibleLayers).filter(
+        (l) => !fetchedLayersRef.current.has(l),
+      ) as string[]
+      if (needed.length > 0) {
+        fetchGraphForLayers(needed, nodeLimit)
+      }
+    }, 300)
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- debounced layer fetch
+  }, [visibleLayers, nodeLimit])
 
   // Apply visibility preset
   const applyPreset = useCallback((presetId: VisibilityMode) => {
@@ -233,19 +294,61 @@ export function useIntelligenceGraph(projectSlug: string | undefined) {
     setVisibilityMode('custom')
   }, [setVisibleLayers, setVisibilityMode])
 
-  // Layout the currently visible nodes — memoized to avoid expensive dagre
-  // recalculation on every render (hover, selection, etc.). Only re-layouts
-  // when the filtered node/edge lists actually change (fetch or layer toggle).
-  const layouted = useMemo(
-    () => layoutGraph(visibleNodes, visibleEdges),
-    [visibleNodes, visibleEdges],
-  )
+  // ── Async dagre layout via Web Worker ─────────────────────────────────────
+  // Posts nodes/edges to the worker, receives computed positions, applies them.
+  // Cancels stale layout requests when inputs change before completion.
+  const [layoutedNodes, setLayoutedNodes] = useState<IntelligenceNode[]>([])
+  const [layoutedEdges, setLayoutedEdges] = useState<IntelligenceEdge[]>([])
+  const [layouting, setLayouting] = useState(false)
+  const layoutVersionRef = useRef(0)
+
+  useEffect(() => {
+    if (visibleNodes.length === 0) {
+      setLayoutedNodes([])
+      setLayoutedEdges([])
+      setLayouting(false)
+      return
+    }
+
+    const version = ++layoutVersionRef.current
+    setLayouting(true)
+
+    const worker = getDagreWorker()
+    const serializedNodes = serializeForWorker(visibleNodes)
+    const serializedEdges = visibleEdges.map((e) => ({ source: e.source, target: e.target }))
+
+    const handler = (event: MessageEvent<{ nodes: { id: string; x: number; y: number }[] }>) => {
+      // Ignore stale results from a previous layout request
+      if (version !== layoutVersionRef.current) return
+
+      const positionMap = new Map(event.data.nodes.map((n) => [n.id, { x: n.x, y: n.y }]))
+
+      setLayoutedNodes(
+        visibleNodes.map((node) => {
+          const pos = positionMap.get(node.id)
+          return pos ? { ...node, position: pos } : node
+        }),
+      )
+      setLayoutedEdges(visibleEdges)
+      setLayouting(false)
+      worker.removeEventListener('message', handler)
+    }
+
+    worker.addEventListener('message', handler)
+    worker.postMessage({ nodes: serializedNodes, edges: serializedEdges })
+
+    return () => {
+      worker.removeEventListener('message', handler)
+    }
+  }, [visibleNodes, visibleEdges])
 
   return {
-    nodes: layouted.nodes,
-    edges: layouted.edges,
+    nodes: layoutedNodes,
+    edges: layoutedEdges,
+    layouting,
     allNodes: nodes,
     allEdges: edges,
+    hiddenEdgeCount,
     selectedNodeId,
     setSelectedNodeId,
     visibleLayers,

@@ -828,7 +828,7 @@ export default function VectorSpaceExplorer(props: VectorSpaceExplorerProps) {
   const [reinforceMessage, setReinforceMessage] = useState('')
   const [showSynapses, setShowSynapses] = useState(true)
   const [showSkills, setShowSkills] = useState(true)
-  const [viewMode, setViewMode] = useState<ViewMode>('2d')
+  const [viewMode, setViewMode] = useState<ViewMode>('3d')
   const [isFullscreen, setIsFullscreen] = useState(false)
   const fullscreenRef = useRef<HTMLDivElement>(null)
 
@@ -960,8 +960,8 @@ export default function VectorSpaceExplorer(props: VectorSpaceExplorerProps) {
   }, [scheduleFrame])
 
   // ── Fetch data ────────────────────────────────────────────────────────
-  const fetchData = useCallback(async (dims: 2 | 3 = 2) => {
-    if (!projectSlug) return
+  const fetchData = useCallback(async (dims: 2 | 3 = 2): Promise<number> => {
+    if (!projectSlug) return 0
     setError(null)
     try {
       const result = await intelligenceApi.getEmbeddingsProjection(projectSlug, dims)
@@ -1020,14 +1020,22 @@ export default function VectorSpaceExplorer(props: VectorSpaceExplorerProps) {
       }
 
       setData(result)
+      return result.points.length
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load projection data')
+      return 0
     }
   }, [projectSlug])
 
   useEffect(() => {
     setLoading(true)
-    fetchData(viewMode === '3d' ? 3 : 2).finally(() => setLoading(false))
+    const dims: 2 | 3 = viewMode === '3d' ? 3 : 2
+    fetchData(dims).then((count) => {
+      // Fallback: if 3D returned no points, retry with 2D (backend may not support 3D UMAP)
+      if (dims === 3 && count === 0) {
+        return fetchData(2)
+      }
+    }).finally(() => setLoading(false))
   }, [fetchData, viewMode])
 
   const handleRefresh = useCallback(async () => {

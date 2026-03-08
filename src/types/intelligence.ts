@@ -15,6 +15,7 @@ export type IntelligenceLayer =
   | 'fabric'
   | 'neural'
   | 'skills'
+  | 'behavioral'
 
 export interface LayerConfig {
   id: IntelligenceLayer
@@ -29,20 +30,23 @@ export interface LayerConfig {
 // GRAPH ENTITY TYPES
 // ============================================================================
 
-export type CodeEntityType = 'file' | 'function' | 'struct' | 'trait' | 'enum'
+export type CodeEntityType = 'file' | 'function' | 'struct' | 'trait' | 'enum' | 'feature_graph'
 export type PMEntityType = 'plan' | 'task' | 'step' | 'milestone' | 'release' | 'commit'
 export type KnowledgeEntityType = 'note' | 'decision' | 'constraint'
 export type SkillEntityType = 'skill'
-export type IntelligenceEntityType = CodeEntityType | PMEntityType | KnowledgeEntityType | SkillEntityType
+export type BehavioralEntityType = 'protocol' | 'protocol_state'
+export type IntelligenceEntityType = CodeEntityType | PMEntityType | KnowledgeEntityType | SkillEntityType | BehavioralEntityType
 
 export type FabricRelationType =
   | 'IMPORTS' | 'CALLS' | 'EXTENDS' | 'IMPLEMENTS'
   | 'TOUCHES' | 'CO_CHANGED' | 'AFFECTS' | 'DISCUSSED' | 'LINKED_TO'
+  | 'INCLUDES_ENTITY'
 export type NeuralRelationType = 'SYNAPSE'
 export type SkillRelationType = 'HAS_MEMBER'
 export type PMRelationType = 'CONTAINS' | 'DEPENDS_ON' | 'INFORMED_BY'
+export type BehavioralRelationType = 'HAS_STATE' | 'TRANSITION' | 'BELONGS_TO_SKILL'
 export type IntelligenceRelationType =
-  | FabricRelationType | NeuralRelationType | SkillRelationType | PMRelationType
+  | FabricRelationType | NeuralRelationType | SkillRelationType | PMRelationType | BehavioralRelationType
 
 // ============================================================================
 // NODE DATA
@@ -127,6 +131,80 @@ export interface SkillNodeData extends BaseNodeData {
   noteCount: number
 }
 
+export interface ProtocolNodeData extends BaseNodeData {
+  entityType: 'protocol'
+  layer: 'behavioral'
+  category: string
+  description?: string
+  skillId?: string
+  /** Set by WS events when a run is active for this protocol */
+  runStatus?: RunStatus
+}
+
+// ============================================================================
+// CONTEXT ROUTING — Types for protocol affinity routing
+// ============================================================================
+
+export interface ContextVector {
+  phase: number
+  structure: number
+  domain: number
+  resource: number
+  lifecycle: number
+}
+
+export interface RelevanceVector {
+  phase: number
+  structure: number
+  domain: number
+  resource: number
+  lifecycle: number
+}
+
+export interface DimensionWeights {
+  phase: number
+  structure: number
+  domain: number
+  resource: number
+  lifecycle: number
+}
+
+export interface DimensionScore {
+  name: string
+  context_value: number
+  relevance_value: number
+  weight: number
+  contribution: number
+}
+
+export interface AffinityScore {
+  score: number
+  dimensions: DimensionScore[]
+  explanation: string
+}
+
+export interface RouteResult {
+  protocol_id: string
+  protocol_name: string
+  protocol_category: string
+  affinity: AffinityScore
+  relevance_vector: RelevanceVector
+}
+
+export interface RouteResponse {
+  context: ContextVector
+  weights: DimensionWeights
+  results: RouteResult[]
+  total_evaluated: number
+}
+
+export interface ProtocolStateNodeData extends BaseNodeData {
+  entityType: 'protocol_state'
+  layer: 'behavioral'
+  stateType: string
+  action?: string
+}
+
 export type IntelligenceNodeData =
   | FileNodeData
   | FunctionNodeData
@@ -136,6 +214,8 @@ export type IntelligenceNodeData =
   | PlanNodeData
   | TaskNodeData
   | SkillNodeData
+  | ProtocolNodeData
+  | ProtocolStateNodeData
   | BaseNodeData
 
 // ============================================================================
@@ -167,6 +247,7 @@ export type VisibilityMode =
   | 'knowledge_overlay'
   | 'neural_view'
   | 'fabric_view'
+  | 'behavioral_view'
   | 'full_stack'
   | 'impact_mode'
   | 'skill_focus'
@@ -224,12 +305,22 @@ export interface SkillsLayerSummary {
   total_activations: number
 }
 
+export interface BehavioralLayerSummary {
+  protocols: number
+  states: number
+  transitions: number
+  system_protocols: number
+  business_protocols: number
+  skill_linked: number
+}
+
 export interface IntelligenceSummary {
   code: CodeLayerSummary
   knowledge: KnowledgeLayerSummary
   fabric: FabricLayerSummary
   neural: NeuralLayerSummary
   skills: SkillsLayerSummary
+  behavioral: BehavioralLayerSummary
 }
 
 // ============================================================================
@@ -309,4 +400,135 @@ export interface ProjectGraphResponse {
   edges: BackendGraphEdge[]
   communities: BackendGraphCommunity[]
   stats: Record<string, BackendLayerStats>
+}
+
+// ============================================================================
+// PROTOCOL (Pattern Federation) — API response types
+// ============================================================================
+
+export interface ProtocolStateApi {
+  id: string
+  protocol_id: string
+  name: string
+  description: string
+  state_type: string  // 'start' | 'intermediate' | 'terminal'
+  action?: string
+}
+
+export interface ProtocolTransitionApi {
+  id: string
+  protocol_id: string
+  from_state: string
+  to_state: string
+  trigger: string
+  guard?: string
+}
+
+export interface ProtocolDetailApi {
+  id: string
+  name: string
+  description: string
+  project_id: string
+  skill_id?: string
+  entry_state: string
+  terminal_states: string[]
+  protocol_category: string  // 'system' | 'business'
+  created_at: string
+  updated_at: string
+  states: ProtocolStateApi[]
+  transitions: ProtocolTransitionApi[]
+}
+
+// ============================================================================
+// PROTOCOL RUNS (FSM execution instances)
+// ============================================================================
+
+export type RunStatus = 'running' | 'completed' | 'failed' | 'cancelled'
+
+export interface StateVisit {
+  state_id: string
+  state_name: string
+  entered_at: string
+  trigger?: string
+}
+
+export interface ProtocolRunApi {
+  id: string
+  protocol_id: string
+  plan_id?: string
+  task_id?: string
+  current_state: string
+  states_visited: StateVisit[]
+  status: RunStatus
+  started_at: string
+  completed_at?: string
+  error?: string
+  triggered_by: string
+}
+
+export interface ProtocolRunProgress {
+  run_id: string
+  state_name: string
+  sub_action: string
+  processed: number
+  total: number
+  display: string
+  elapsed_ms: number
+}
+
+// ============================================================================
+// PATTERN COMPOSER — Compose & Simulate types
+// ============================================================================
+
+export interface ComposeStateInline {
+  name: string
+  description?: string
+  state_type?: 'start' | 'intermediate' | 'terminal'
+  action?: string
+}
+
+export interface ComposeTransitionInline {
+  from_state: string
+  to_state: string
+  trigger: string
+  guard?: string
+}
+
+export interface NoteStateBinding {
+  note_id: string
+  state_name: string
+}
+
+export interface ComposeProtocolRequest {
+  project_id: string
+  name: string
+  description?: string
+  category?: 'system' | 'business'
+  notes: NoteStateBinding[]
+  states: ComposeStateInline[]
+  transitions: ComposeTransitionInline[]
+  relevance_vector?: RelevanceVector
+  triggers?: { pattern_type: string; pattern_value: string; confidence_threshold?: number }[]
+}
+
+export interface ComposeResponse {
+  protocol_id: string
+  skill_id: string
+  states_created: number
+  transitions_created: number
+  notes_linked: number
+}
+
+export interface SimulateRequest {
+  protocol_id: string
+  context?: ContextVector
+  plan_id?: string
+}
+
+export interface SimulateResponse {
+  score: number
+  dimensions: DimensionScore[]
+  would_activate: boolean
+  explanation: string
+  context_used: ContextVector
 }

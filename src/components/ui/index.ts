@@ -8,6 +8,7 @@ export {
   ImportanceBadge,
   ReleaseStatusBadge,
   StepStatusBadge,
+  MilestoneStatusBadge,
   InteractiveMilestoneStatusBadge,
   InteractivePlanStatusBadge,
   InteractiveTaskStatusBadge,
@@ -54,3 +55,5 @@ export { AnimatedCounter } from './AnimatedCounter'
 export { StatCard } from './StatCard'
 export { Sparkline } from './Sparkline'
 export { PulseIndicator } from './PulseIndicator'
+export { RadarChart } from './RadarChart'
+export type { RadarAxis, RadarSize, RadarChartProps } from './RadarChart'

@@ -3,23 +3,26 @@ import { useParams } from 'react-router-dom'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import {
   ReactFlow,
+  ReactFlowProvider,
   Background,
   Controls,
   MiniMap,
+  useReactFlow,
   applyNodeChanges,
   type NodeChange,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { Box, Grid3x3, Maximize, Minimize, PanelRightClose, PanelRightOpen } from 'lucide-react'
+import { Box, Grid3x3, Maximize, Minimize, PanelRightClose, PanelRightOpen, Search } from 'lucide-react'
 
 import { intelligenceNodeTypes } from './nodes'
 import { intelligenceEdgeTypes } from './edges'
 import { useIntelligenceGraph } from './useIntelligenceGraph'
 import { useGraphWebSocket } from './useGraphWebSocket'
+import { useProtocolRunEvents } from './useProtocolRunEvents'
 import { NodeInspector } from './NodeInspector'
 import { LayerControls } from './LayerControls'
 import { LiveIndicator } from './LiveIndicator'
-import { SpreadingActivation, activationSearchOpenAtom } from './SpreadingActivation'
+import { SpreadingActivation, activationSearchOpenAtom, activationStateAtom } from './SpreadingActivation'
 import { ENTITY_COLORS } from '@/constants/intelligence'
 import {
   intelligenceLoadingAtom,
@@ -30,7 +33,65 @@ import {
 } from '@/atoms/intelligence'
 import { ErrorState } from '@/components/ui/ErrorState'
 import { EmptyState } from '@/components/ui/EmptyState'
-import type { IntelligenceNode, IntelligenceEdge } from '@/types/intelligence'
+import type { IntelligenceNode, IntelligenceEdge, IntelligenceLayer } from '@/types/intelligence'
+
+// ── Entity legend data ──────────────────────────────────────────────────────
+const ENTITY_LEGEND: { layer: IntelligenceLayer; types: { key: string; label: string }[] }[] = [
+  { layer: 'code', types: [
+    { key: 'file', label: 'File' },
+    { key: 'function', label: 'Function' },
+    { key: 'struct', label: 'Struct' },
+    { key: 'trait', label: 'Trait' },
+    { key: 'enum', label: 'Enum' },
+    { key: 'feature_graph', label: 'Feature Graph' },
+  ]},
+  { layer: 'knowledge', types: [
+    { key: 'note', label: 'Note' },
+    { key: 'decision', label: 'Decision' },
+    { key: 'constraint', label: 'Constraint' },
+  ]},
+  { layer: 'skills', types: [
+    { key: 'skill', label: 'Skill' },
+  ]},
+  { layer: 'behavioral', types: [
+    { key: 'protocol', label: 'Protocol' },
+    { key: 'protocol_state', label: 'State' },
+  ]},
+  { layer: 'pm', types: [
+    { key: 'plan', label: 'Plan' },
+    { key: 'task', label: 'Task' },
+    { key: 'milestone', label: 'Milestone' },
+  ]},
+]
+
+// ── Auto fit-view on container resize / navigation ──────────────────────────
+// Placed as a child of <ReactFlow> so useReactFlow() hooks into the provider.
+// Debounced ResizeObserver triggers fitView when container dimensions change
+// (sidebar toggle, window resize, navigation between projects).
+function AutoFitView({ containerRef }: { containerRef: React.RefObject<HTMLDivElement | null> }) {
+  const { fitView } = useReactFlow()
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+
+    let timeout: ReturnType<typeof setTimeout> | null = null
+    const observer = new ResizeObserver(() => {
+      if (timeout) clearTimeout(timeout)
+      timeout = setTimeout(() => {
+        fitView({ padding: 0.15, duration: 200 })
+      }, 200)
+    })
+
+    observer.observe(el)
+    return () => {
+      observer.disconnect()
+      if (timeout) clearTimeout(timeout)
+    }
+  }, [containerRef, fitView])
+
+  return null
+}
 
 // Lazy-load the 3D component — Three.js (~300KB gz) only loaded when needed
 const IntelligenceGraph3D = lazy(() => import('./graph3d/IntelligenceGraph3D'))
@@ -47,15 +108,19 @@ export default function IntelligenceGraphPage(props: IntelligenceGraphPageProps)
   const projectSlug = props.projectSlug ?? params.projectSlug
   const loading = useAtomValue(intelligenceLoadingAtom)
   const error = useAtomValue(intelligenceErrorAtom)
-  const setSearchOpen = useSetAtom(activationSearchOpenAtom)
+  const [searchOpen, setSearchOpen] = useAtom(activationSearchOpenAtom)
   const hoveredNodeId = useAtomValue(hoveredNodeIdAtom)
   const setHoveredNodeId = useSetAtom(hoveredNodeIdAtom)
   const [viewMode, setViewMode] = useAtom(graphViewModeAtom)
   const selectedNodeId = useAtomValue(selectedNodeIdAtom)
+  const activation = useAtomValue(activationStateAtom)
 
   const {
     nodes: layoutedNodes,
     edges,
+    layouting,
+    allNodes,
+    hiddenEdgeCount,
     setSelectedNodeId,
     visibleLayers,
     toggleLayer,
@@ -65,6 +130,8 @@ export default function IntelligenceGraphPage(props: IntelligenceGraphPageProps)
 
   // Real-time WebSocket updates
   const { connected: wsConnected, lastEventAt } = useGraphWebSocket(projectSlug)
+  // Protocol run events — update runStatus overlay on ProtocolNodes
+  useProtocolRunEvents()
 
   // Fullscreen
   const containerRef = useRef<HTMLDivElement>(null)
@@ -126,32 +193,63 @@ export default function IntelligenceGraphPage(props: IntelligenceGraphPageProps)
     setHoveredNodeId(null)
   }, [setHoveredNodeId])
 
-  // Propagation path highlighting — dim non-connected edges on hover
-  const highlightedEdges = useMemo((): IntelligenceEdge[] => {
-    if (!hoveredNodeId) return edges
+  // ── CSS-driven edge highlighting (zero JS overhead on hover) ──────────────
+  // Default edges are dimmed/highlighted via dynamic <style> + data-testid selectors.
+  // Custom edges (synapse, co_changed, affects) read atoms directly.
+  // Only during spreading activation do we fall back to JS for default edges.
+  const activationActive = activation.phase !== 'idle'
+
+  /** CSS rules for hover/selection highlighting of default edges.
+   *  Edge IDs use `|` separator: `e|source|target|idx` → data-testid="rf__edge-e|src|tgt|idx"
+   *  Substring match `[data-testid*="|nodeId|"]` reliably targets connected edges. */
+  const highlightCss = useMemo(() => {
+    // During activation, JS handles default edges (can't express Set membership in CSS)
+    if (activationActive) return ''
+    if (!hoveredNodeId && !selectedNodeId) return ''
+
+    const esc = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+    let css = `.react-flow__edge-default .react-flow__edge-path { opacity: 0.1; transition: opacity 200ms, stroke 200ms, stroke-width 200ms; }\n`
+
+    // Selection highlighting (cyan) — listed first, lower CSS specificity priority
+    if (selectedNodeId) {
+      const e = esc(selectedNodeId)
+      css += `.react-flow__edge-default[data-testid*="|${e}|"] .react-flow__edge-path { opacity: 1; stroke: #22D3EE; stroke-width: 2px; }\n`
+    }
+    // Hover highlighting (amber) — listed second, takes priority over selection
+    if (hoveredNodeId) {
+      const e = esc(hoveredNodeId)
+      css += `.react-flow__edge-default[data-testid*="|${e}|"] .react-flow__edge-path { opacity: 1; stroke: #F59E0B; stroke-width: 2px; }\n`
+    }
+
+    return css
+  }, [hoveredNodeId, selectedNodeId, activationActive])
+
+  /** During spreading activation, apply JS-based dimming to default edges.
+   *  Custom edges handle their own activation via activationStateAtom.
+   *  This useMemo does NOT depend on hoveredNodeId — hover is CSS-only even during activation. */
+  const displayEdges = useMemo(() => {
+    if (!activationActive) return edges
+
+    const activatedNodeIds = new Set([...activation.directIds, ...activation.propagatedIds])
+
     return edges.map((edge): IntelligenceEdge => {
-      const isConnected = edge.source === hoveredNodeId || edge.target === hoveredNodeId
-      if (edge.type && edge.type !== 'default') {
+      // Custom edges handle their own activation highlighting via atoms
+      if (edge.type && edge.type !== 'default') return edge
+
+      const isActivationRelevant = activatedNodeIds.has(edge.source) && activatedNodeIds.has(edge.target)
+
+      if (!isActivationRelevant) {
         return {
           ...edge,
-          data: {
-            ...edge.data!,
-            _highlighted: isConnected,
-            _hasHover: true,
-          } as IntelligenceEdge['data'],
+          style: { ...edge.style, opacity: 0.04, transition: 'opacity 300ms' },
         }
       }
       return {
         ...edge,
-        style: {
-          ...edge.style,
-          opacity: isConnected ? 1 : 0.1,
-          strokeWidth: isConnected ? ((edge.style?.strokeWidth as number) ?? 1) * 1.5 : edge.style?.strokeWidth,
-          transition: 'opacity 200ms, stroke-width 200ms',
-        },
+        style: { ...edge.style, stroke: '#22D3EE', transition: 'opacity 300ms, stroke 300ms' },
       }
     })
-  }, [edges, hoveredNodeId])
+  }, [edges, activationActive, activation.directIds, activation.propagatedIds])
 
   // Keyboard shortcut: Ctrl/Cmd+K to open spreading activation search
   useEffect(() => {
@@ -177,16 +275,26 @@ export default function IntelligenceGraphPage(props: IntelligenceGraphPageProps)
   const nodeTypes = useMemo(() => intelligenceNodeTypes, [])
   const edgeTypes = useMemo(() => intelligenceEdgeTypes, [])
 
-  // Determine overlay states (no more early returns — canvas always rendered)
-  const showLoading = loading && nodes.length === 0
-  const showError = !!error && nodes.length === 0
-  const showEmpty = !loading && !error && nodes.length === 0
+  // Determine overlay states — use allNodes (raw API data) instead of layouted nodes
+  // because in 3D mode the dagre worker doesn't run, so local `nodes` stays empty.
+  const hasData = allNodes.length > 0
+  const showLoading = loading && !hasData
+  const showError = !!error && !hasData
+  const showEmpty = !loading && !error && !hasData
 
   return (
     <div
       ref={containerRef}
-      className={`relative w-full ${props.embedded ? '' : '-mx-4 md:-mx-6 -mb-2'} ${isFullscreen ? 'bg-slate-950' : ''}`}
-      style={{ height: props.embedded && !isFullscreen ? '600px' : isFullscreen ? '100vh' : 'calc(100dvh - 5rem)' }}
+      className={`relative ${
+        isFullscreen
+          ? 'w-screen bg-slate-950'
+          : props.embedded
+            ? 'w-full'
+            : '-mx-4 md:-mx-6 -mb-2' /* no w-full: auto width + negative margins = full bleed */
+      }`}
+      style={{
+        height: props.embedded && !isFullscreen ? '600px' : isFullscreen ? '100vh' : 'calc(100dvh - 5rem)',
+      }}
     >
       {/* 2D-only CSS (synapse animations, dark theme overrides) */}
       {viewMode === '2d' && (
@@ -231,6 +339,28 @@ export default function IntelligenceGraphPage(props: IntelligenceGraphPageProps)
             30%  { filter: brightness(2.5) drop-shadow(0 0 6px currentColor); }
             100% { filter: brightness(1); }
           }
+          @keyframes fsm-pulse {
+            0%, 100% { opacity: 0.3; }
+            50% { opacity: 0.7; }
+          }
+          .fsm-state-pulse {
+            animation: fsm-pulse 2s ease-in-out infinite;
+          }
+          @keyframes fsm-edge-flow {
+            to { stroke-dashoffset: -16; }
+          }
+          .fsm-edge-active {
+            stroke-dasharray: 8 4;
+            animation: fsm-edge-flow 1s linear infinite;
+          }
+          @keyframes fsm-progress {
+            0% { opacity: 0.8; }
+            50% { opacity: 1; }
+            100% { opacity: 0.8; }
+          }
+          .fsm-progress-bar {
+            animation: fsm-progress 1.5s ease-in-out infinite;
+          }
           input[type="range"]::-webkit-slider-thumb {
             -webkit-appearance: none;
             width: 12px; height: 12px; border-radius: 50%;
@@ -265,6 +395,9 @@ export default function IntelligenceGraphPage(props: IntelligenceGraphPageProps)
         `}</style>
       )}
 
+      {/* Dynamic CSS for edge hover/selection highlighting — zero JS per hover event */}
+      {highlightCss && <style>{highlightCss}</style>}
+
       {/* Layer controls (top-left overlay) — presets always visible, details in Custom mode */}
       <LayerControls
         visibleLayers={visibleLayers}
@@ -279,41 +412,44 @@ export default function IntelligenceGraphPage(props: IntelligenceGraphPageProps)
 
       {/* ── Canvas: 2D or 3D ───────────────────────────────────────────── */}
       {viewMode === '2d' ? (
-        <ReactFlow
-          nodes={nodes}
-          edges={highlightedEdges}
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          onNodesChange={onNodesChange}
-          onNodeClick={onNodeClick}
-          onPaneClick={onPaneClick}
-          onNodeMouseEnter={onNodeMouseEnter}
-          onNodeMouseLeave={onNodeMouseLeave}
-          fitView
-          fitViewOptions={{ padding: 0.15 }}
-          minZoom={0.1}
-          maxZoom={2.5}
-          colorMode="dark"
-          proOptions={{ hideAttribution: true }}
-          nodesDraggable
-          nodesConnectable={false}
-          panOnDrag
-          zoomOnScroll
-          zoomOnPinch
-        >
-          <Background color="#1e293b" gap={24} size={1} />
-          <Controls showInteractive={false} className="!bg-slate-800 !border-slate-700" />
-          <MiniMap
-            nodeColor={miniMapNodeColor}
-            maskColor="rgba(15, 23, 42, 0.8)"
-            className="!bg-slate-900 !border-slate-700"
-            pannable
-            zoomable
-          />
-        </ReactFlow>
+        <ReactFlowProvider>
+          <ReactFlow
+            nodes={nodes}
+            edges={displayEdges}
+            nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
+            onNodesChange={onNodesChange}
+            onNodeClick={onNodeClick}
+            onPaneClick={onPaneClick}
+            onNodeMouseEnter={onNodeMouseEnter}
+            onNodeMouseLeave={onNodeMouseLeave}
+            fitView
+            fitViewOptions={{ padding: 0.15 }}
+            minZoom={0.1}
+            maxZoom={2.5}
+            colorMode="dark"
+            proOptions={{ hideAttribution: true }}
+            nodesDraggable
+            nodesConnectable={false}
+            panOnDrag
+            zoomOnScroll
+            zoomOnPinch
+          >
+            <Background color="#1e293b" gap={24} size={1} />
+            <Controls showInteractive={false} className="!bg-slate-800 !border-slate-700" />
+            <MiniMap
+              nodeColor={miniMapNodeColor}
+              maskColor="rgba(15, 23, 42, 0.8)"
+              className="!bg-slate-900 !border-slate-700"
+              pannable
+              zoomable
+            />
+            <AutoFitView containerRef={containerRef} />
+          </ReactFlow>
+        </ReactFlowProvider>
       ) : (
         <Suspense fallback={
-          <div className="w-full h-full flex items-center justify-center bg-slate-950">
+          <div className="absolute inset-0 flex items-center justify-center bg-slate-950">
             <div className="text-slate-500 text-sm flex items-center gap-2">
               <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
               Loading 3D engine...
@@ -333,6 +469,12 @@ export default function IntelligenceGraphPage(props: IntelligenceGraphPageProps)
           </div>
         </div>
       )}
+      {layouting && !showLoading && hasData && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-800/90 backdrop-blur-sm border border-slate-700 text-xs text-slate-400">
+          <div className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+          Computing layout…
+        </div>
+      )}
       {showError && (
         <div className="absolute inset-0 z-30 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm">
           <ErrorState description={error!} onRetry={fetchGraph} />
@@ -348,18 +490,24 @@ export default function IntelligenceGraphPage(props: IntelligenceGraphPageProps)
         </div>
       )}
 
-      {/* Node Inspector (right sidebar overlay) — collapsible */}
-      {selectedNodeId && !inspectorCollapsed && <NodeInspector />}
+      {/* Node Inspector (right sidebar overlay) — collapsible, wider in fullscreen */}
+      {selectedNodeId && !inspectorCollapsed && <NodeInspector isFullscreen={isFullscreen} />}
 
-      {/* Inspector collapse/expand toggle (top-right area, below live indicator) */}
+      {/* Inspector collapse/expand toggle — tab stuck to left edge of panel */}
       {selectedNodeId && (
         <button
           onClick={() => setInspectorCollapsed((v) => !v)}
-          className="absolute top-12 right-3 z-40 flex items-center gap-1 px-2 py-1.5 rounded-md text-[10px] font-medium bg-slate-800/90 backdrop-blur-sm border border-slate-700 text-slate-400 hover:text-slate-200 hover:bg-slate-700/80 transition-colors"
+          className={`absolute top-[4.5rem] z-40 flex items-center gap-1 py-2 rounded-l-md text-[10px] font-medium bg-slate-800/90 backdrop-blur-sm border border-r-0 border-slate-700 text-slate-400 hover:text-slate-200 hover:bg-slate-700/80 transition-all duration-200 ${
+            inspectorCollapsed
+              ? 'right-0 px-2 rounded-r-md border-r border-slate-700'
+              : isFullscreen
+                ? 'right-[24.75rem] px-1.5'
+                : 'right-[20.75rem] px-1.5'
+          }`}
           title={inspectorCollapsed ? 'Show inspector' : 'Hide inspector'}
         >
           {inspectorCollapsed ? <PanelRightOpen size={12} /> : <PanelRightClose size={12} />}
-          {inspectorCollapsed ? 'Details' : 'Hide'}
+          {inspectorCollapsed ? 'Details' : ''}
         </button>
       )}
 
@@ -402,11 +550,41 @@ export default function IntelligenceGraphPage(props: IntelligenceGraphPageProps)
         </button>
       </div>
 
-      {/* Keyboard shortcut hint (bottom-center) */}
-      <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-40 text-[10px] text-slate-600">
-        <kbd className="px-1 py-0.5 rounded bg-slate-800 border border-slate-700 font-mono">⌘K</kbd>
-        {' '}Spreading Activation
+      {/* Entity legend (bottom-left info section) — always visible, shows types for active layers */}
+      <div className="absolute bottom-3 left-3 z-40 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg bg-slate-900/80 backdrop-blur-sm border border-slate-700/60 px-3 py-2 max-w-md">
+        {ENTITY_LEGEND
+          .filter((group) => visibleLayers.has(group.layer))
+          .flatMap((group) => group.types)
+          .map((t) => {
+            const color = ENTITY_COLORS[t.key as keyof typeof ENTITY_COLORS] ?? '#6B7280'
+            return (
+              <span key={t.key} className="flex items-center gap-1.5 text-[10px] text-slate-400">
+                <span
+                  className="w-2 h-2 rounded-full shrink-0"
+                  style={{ backgroundColor: color }}
+                />
+                {t.label}
+              </span>
+            )
+          })}
+        {hiddenEdgeCount > 0 && (
+          <span className="flex items-center gap-1 text-[10px] text-amber-400/80 ml-2 pl-2 border-l border-slate-700/60">
+            {hiddenEdgeCount} edges hidden
+          </span>
+        )}
       </div>
+
+      {/* Keyboard shortcut hint (bottom-center) — prominent CTA, hidden when search is open */}
+      {!searchOpen && <button
+        onClick={() => setSearchOpen(true)}
+        className="absolute bottom-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2.5 px-4 py-2 rounded-full bg-slate-800/90 backdrop-blur-sm border border-slate-600/80 text-slate-300 hover:text-cyan-300 hover:border-cyan-500/50 hover:bg-slate-800 hover:shadow-lg hover:shadow-cyan-500/10 transition-all duration-200 group cursor-pointer"
+      >
+        <Search size={14} className="text-slate-400 group-hover:text-cyan-400 transition-colors" />
+        <span className="text-xs font-medium">Spreading Activation</span>
+        <kbd className="text-[11px] px-1.5 py-0.5 rounded-md bg-slate-700/80 border border-slate-600 font-mono text-slate-400 group-hover:text-cyan-300 group-hover:border-cyan-500/40 transition-colors">
+          ⌘K
+        </kbd>
+      </button>}
     </div>
   )
 }

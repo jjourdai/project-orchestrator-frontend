@@ -63,10 +63,18 @@ export const LAYERS: Record<IntelligenceLayer, LayerConfig> = {
     enabled: false,
     zIndex: 7,
   },
+  behavioral: {
+    id: 'behavioral',
+    label: 'Behavioral',
+    description: 'Protocols, states, transitions (FSM)',
+    color: '#F97316', // orange-500
+    enabled: false,
+    zIndex: 6,
+  },
 }
 
 export const LAYER_ORDER: IntelligenceLayer[] = [
-  'code', 'pm', 'knowledge', 'fabric', 'neural', 'skills',
+  'code', 'pm', 'knowledge', 'fabric', 'neural', 'skills', 'behavioral',
 ]
 
 // ============================================================================
@@ -74,11 +82,11 @@ export const LAYER_ORDER: IntelligenceLayer[] = [
 // ============================================================================
 
 export const ENTITY_COLORS: Record<IntelligenceEntityType, string> = {
-  // Code (Blues)
+  // Code — maximally distinct hues across the color wheel
   file: '#3B82F6',       // blue-500
-  function: '#60A5FA',   // blue-400
-  struct: '#2563EB',     // blue-600
-  trait: '#6366F1',      // indigo-500
+  function: '#22C55E',   // green-500
+  struct: '#A855F7',     // purple-500
+  trait: '#EF4444',      // red-500
   enum: '#64748B',       // slate-500
   // PM (Greens)
   plan: '#10B981',       // emerald-500
@@ -93,6 +101,11 @@ export const ENTITY_COLORS: Record<IntelligenceEntityType, string> = {
   constraint: '#DC2626', // red-600
   // Skills (Pinks)
   skill: '#EC4899',      // pink-500
+  // Behavioral (Oranges)
+  protocol: '#F97316',        // orange-500
+  protocol_state: '#FB923C',  // orange-400
+  // Feature Graphs (Fuchsia — visually distinct from blue code nodes)
+  feature_graph: '#E879F9',   // fuchsia-400
 }
 
 // ============================================================================
@@ -119,6 +132,10 @@ export const EDGE_STYLES: Record<IntelligenceRelationType, {
   CONTAINS:   { color: '#10B981', strokeWidth: 1 },
   DEPENDS_ON: { color: '#F59E0B', strokeWidth: 1.5, strokeDasharray: '6 3' },
   INFORMED_BY:{ color: '#8B5CF6', strokeWidth: 1, strokeDasharray: '4 4' },
+  HAS_STATE:  { color: '#F97316', strokeWidth: 1.5 },
+  TRANSITION: { color: '#EA580C', strokeWidth: 2, animated: true },
+  BELONGS_TO_SKILL: { color: '#FB923C', strokeWidth: 1, strokeDasharray: '6 3' },
+  INCLUDES_ENTITY:  { color: '#E879F9', strokeWidth: 1, strokeDasharray: '4 3' },
 }
 
 // ============================================================================
@@ -141,6 +158,9 @@ export const NODE_SIZES: Record<IntelligenceEntityType, { width: number; height:
   decision:   { width: 40, height: 40 },
   constraint: { width: 24, height: 48 },
   skill:      { width: 56, height: 56 },
+  protocol:       { width: 64, height: 40 },
+  protocol_state: { width: 32, height: 32 },
+  feature_graph:  { width: 56, height: 40 },
 }
 
 // ============================================================================
@@ -184,10 +204,17 @@ export const VISIBILITY_PRESETS: VisibilityPreset[] = [
     icon: 'Zap',
   },
   {
+    id: 'behavioral_view',
+    label: 'Behavioral',
+    description: 'Protocoles & machines à états',
+    layers: ['behavioral', 'skills'],
+    icon: 'Workflow',
+  },
+  {
     id: 'full_stack',
     label: 'Full',
     description: 'Toutes les couches',
-    layers: ['code', 'pm', 'knowledge', 'fabric', 'neural', 'skills'],
+    layers: ['code', 'pm', 'knowledge', 'fabric', 'neural', 'skills', 'behavioral'],
     icon: 'Layers',
   },
 ]
@@ -235,6 +262,9 @@ export const EDGE_RENDER_PRIORITY: IntelligenceRelationType[] = [
   'CONTAINS',
   'DEPENDS_ON',
   'INFORMED_BY',
+  'TRANSITION',
+  'HAS_STATE',
+  'BELONGS_TO_SKILL',
   'TOUCHES',
   'DISCUSSED',
 ]

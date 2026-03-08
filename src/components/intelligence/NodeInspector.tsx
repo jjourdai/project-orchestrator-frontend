@@ -2,10 +2,11 @@ import { memo } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { selectedNodeAtom, selectedNodeIdAtom } from '@/atoms/intelligence'
 import { ENTITY_COLORS } from '@/constants/intelligence'
-import type { IntelligenceNodeData, FileNodeData, NoteNodeData, DecisionNodeData, SkillNodeData } from '@/types/intelligence'
+import type { IntelligenceNodeData, FileNodeData, NoteNodeData, DecisionNodeData, SkillNodeData, ProtocolNodeData } from '@/types/intelligence'
 import { FileContextCard } from './cards/FileContextCard'
 import { NoteContextCard } from './cards/NoteContextCard'
 import { SkillContextCard } from './cards/SkillContextCard'
+import { ProtocolContextCard } from './cards/ProtocolContextCard'
 import {
   FileCode2,
   Box,
@@ -14,6 +15,8 @@ import {
   LayoutList,
   CheckSquare,
   Brain,
+  Workflow,
+  Circle,
   X,
 } from 'lucide-react'
 
@@ -30,6 +33,8 @@ const entityIcons: Record<string, typeof Box> = {
   plan: LayoutList,
   task: CheckSquare,
   skill: Brain,
+  protocol: Workflow,
+  protocol_state: Circle,
 }
 
 // ============================================================================
@@ -142,7 +147,11 @@ function GenericPropertiesPanel({ data }: { data: Record<string, unknown> }) {
 // MAIN NODE INSPECTOR
 // ============================================================================
 
-function NodeInspectorComponent() {
+interface NodeInspectorProps {
+  isFullscreen?: boolean
+}
+
+function NodeInspectorComponent({ isFullscreen }: NodeInspectorProps) {
   const node = useAtomValue(selectedNodeAtom)
   const setSelectedNodeId = useSetAtom(selectedNodeIdAtom)
 
@@ -154,7 +163,9 @@ function NodeInspectorComponent() {
   const Icon = entityIcons[entityType] ?? Box
 
   return (
-    <div className="absolute top-3 right-3 z-10 w-80 max-h-[calc(100%-24px)] overflow-y-auto rounded-lg bg-slate-900/95 backdrop-blur-sm border border-slate-700 shadow-xl">
+    <div className={`absolute top-14 right-3 z-30 overflow-y-auto rounded-lg bg-slate-900/95 backdrop-blur-sm border border-slate-700 shadow-xl transition-all duration-200 ${
+      isFullscreen ? 'w-96 max-h-[calc(100%-120px)]' : 'w-80 max-h-[calc(100%-124px)]'
+    }`}>
       {/* Header */}
       <div className="flex items-center gap-2 p-3 border-b border-slate-700">
         <div
@@ -189,6 +200,8 @@ function NodeInspectorComponent() {
           <DecisionDetailPanel data={data as DecisionNodeData} />
         ) : entityType === 'skill' ? (
           <SkillContextCard data={data as SkillNodeData} entityId={data.entityId} />
+        ) : entityType === 'protocol' ? (
+          <ProtocolContextCard data={data as ProtocolNodeData} entityId={data.entityId} />
         ) : (
           <GenericPropertiesPanel data={data} />
         )}
