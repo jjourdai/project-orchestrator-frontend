@@ -1487,12 +1487,30 @@ export default function VectorSpaceExplorer(props: VectorSpaceExplorerProps) {
         )}
         <Card>
           <CardContent className="py-12">
-            <div className="flex flex-col items-center gap-3 text-slate-500">
-              <Brain size={40} className="text-slate-700" />
-              <p className="text-sm font-medium">No embeddings available</p>
-              <p className="text-xs text-slate-600">
-                Notes and decisions need embeddings to project. Run &quot;Backfill Synapses&quot; from the Intelligence Dashboard.
-              </p>
+            <div className="flex flex-col items-center gap-4 text-slate-500">
+              <div className="w-16 h-16 rounded-full bg-violet-500/5 flex items-center justify-center">
+                <Brain size={32} className="text-slate-600" />
+              </div>
+              <div className="text-center">
+                <p className="text-sm font-medium text-slate-300 mb-1">No embeddings available</p>
+                <p className="text-xs text-slate-500 max-w-sm">
+                  The vector space visualizes semantic proximity between notes and decisions. To populate it:
+                </p>
+              </div>
+              <div className="flex flex-col gap-2 text-xs text-slate-500 mt-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-400 font-medium">1.</span>
+                  <span>Create notes and decisions to build your knowledge base</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-400 font-medium">2.</span>
+                  <span>Run <strong className="text-slate-400">&quot;Backfill Synapses&quot;</strong> from the Intelligence Dashboard</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-400 font-medium">3.</span>
+                  <span>Embeddings will be computed and the UMAP projection will appear</span>
+                </div>
+              </div>
             </div>
           </CardContent>
         </Card>

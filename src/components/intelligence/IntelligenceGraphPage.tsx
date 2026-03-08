@@ -477,7 +477,7 @@ export default function IntelligenceGraphPage(props: IntelligenceGraphPageProps)
           <EmptyState
             variant="search"
             title="No intelligence data"
-            description="Sync your project to populate the intelligence graph."
+            description="The intelligence graph visualizes notes, decisions, skills, and their neural connections. Sync your project and create knowledge entries to populate it."
           />
         </div>
       )}
