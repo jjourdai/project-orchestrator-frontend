@@ -6,16 +6,19 @@
  * in an accordion below.
  */
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { ChevronDown, ChevronRight, Activity, Clock, DollarSign, Layers, ArrowLeft, GitBranch } from 'lucide-react'
 import { Card, CardContent, LoadingPage, ErrorState, ProgressBar } from '@/components/ui'
 import { AgentCard } from '@/components/runner/AgentCard'
+import { AgentExecutionDetail } from '@/components/runner/AgentExecutionDetail'
 import { CancelButton } from '@/components/runner/CancelButton'
 import { ConversationPanel } from '@/components/runner/ConversationPanel'
 import { DiscussionTreeView } from '@/components/discussions/DiscussionTreeView'
+import { chatApi } from '@/services/chat'
 import { useRunnerStatus } from '@/services/runner'
 import type { ActiveAgentSnapshot, WaveSnapshot } from '@/services/runner'
+import type { AgentExecution } from '@/types'
 import { useWorkspaceSlug } from '@/hooks'
 import { workspacePath } from '@/utils/paths'
 
@@ -41,6 +44,30 @@ const runStatusConfig: Record<string, { label: string; bg: string; text: string;
 }
 
 // ---------------------------------------------------------------------------
+// Agent executions lookup by task_id
+// ---------------------------------------------------------------------------
+
+function useAgentExecutionsMap(runId: string | undefined) {
+  const [execMap, setExecMap] = useState<Map<string, AgentExecution>>(new Map())
+
+  const fetchExecutions = useCallback(async () => {
+    if (!runId) return
+    try {
+      const execs = await chatApi.getAgentExecutions(runId)
+      const map = new Map<string, AgentExecution>()
+      for (const e of execs) map.set(e.task_id, e)
+      setExecMap(map)
+    } catch {
+      // Endpoint may not be available yet — graceful fallback
+    }
+  }, [runId])
+
+  useEffect(() => { fetchExecutions() }, [fetchExecutions])
+
+  return execMap
+}
+
+// ---------------------------------------------------------------------------
 // WaveSection (collapsible for previous waves)
 // ---------------------------------------------------------------------------
 
@@ -50,9 +77,10 @@ interface WaveSectionProps {
   defaultOpen?: boolean
   selectedSessionId: string | null
   onViewConversation: (sessionId: string) => void
+  executionsMap: Map<string, AgentExecution>
 }
 
-function WaveSection({ wave, isActive, defaultOpen = false, selectedSessionId, onViewConversation }: WaveSectionProps) {
+function WaveSection({ wave, isActive, defaultOpen = false, selectedSessionId, onViewConversation, executionsMap }: WaveSectionProps) {
   const [open, setOpen] = useState(defaultOpen || isActive)
 
   const completedCount = wave.agents.filter(a => a.status === 'completed').length
@@ -88,14 +116,23 @@ function WaveSection({ wave, isActive, defaultOpen = false, selectedSessionId, o
       {open && (
         <div className="px-4 pb-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {wave.agents.map((agent) => (
-              <AgentCard
-                key={agent.task_id}
-                agent={agent}
-                isSelected={selectedSessionId === agent.session_id}
-                onViewConversation={onViewConversation}
-              />
-            ))}
+            {wave.agents.map((agent) => {
+              const exec = executionsMap.get(agent.task_id)
+              return (
+                <AgentCard
+                  key={agent.task_id}
+                  agent={agent}
+                  isSelected={selectedSessionId === agent.session_id}
+                  onViewConversation={onViewConversation}
+                  detailContent={exec ? (
+                    <AgentExecutionDetail
+                      execution={exec}
+                      onViewConversation={exec.session_id ? onViewConversation : undefined}
+                    />
+                  ) : undefined}
+                />
+              )
+            })}
           </div>
         </div>
       )}
@@ -113,6 +150,9 @@ export function RunnerDashboard() {
   const { planId } = useParams<{ planId: string }>()
   const wsSlug = useWorkspaceSlug()
   const { snapshot, isRunning, error, refresh } = useRunnerStatus(planId)
+
+  // Fetch agent executions for the current run
+  const executionsMap = useAgentExecutionsMap(snapshot?.run_id)
 
   // Tab state
   const [activeTab, setActiveTab] = useState<DashboardTab>('waves')
@@ -248,6 +288,7 @@ export function RunnerDashboard() {
                 defaultOpen={true}
                 selectedSessionId={selectedSessionId}
                 onViewConversation={handleViewConversation}
+                executionsMap={executionsMap}
               />
             )}
 
@@ -267,6 +308,7 @@ export function RunnerDashboard() {
                       defaultOpen={false}
                       selectedSessionId={selectedSessionId}
                       onViewConversation={handleViewConversation}
+                      executionsMap={executionsMap}
                     />
                   ))}
               </div>
