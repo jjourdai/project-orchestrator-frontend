@@ -1,17 +1,18 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useAtomValue } from 'jotai'
-import { chatSessionRefreshAtom, activeWorkspaceSlugAtom } from '@/atoms'
+import { useAtom, useAtomValue } from 'jotai'
+import { chatSessionRefreshAtom, activeWorkspaceSlugAtom, showSpawnedSessionsAtom } from '@/atoms'
 import { chatApi, getEventBus, workspacesApi } from '@/services'
-import { useActiveRunTracker } from '@/hooks'
+import { useActiveRunTracker, useDetachedRuns } from '@/hooks'
 import type {
   ChatSession,
   CrudEvent,
   MessageSearchResult,
   PermissionMode,
   Project,
+  SpawnedBy,
 } from '@/types'
 import { Select, PulseIndicator } from '@/components/ui'
-import { Folder, Trash2, Search, X, Loader2, ChevronRight, MessageCircle, Play } from 'lucide-react'
+import { Folder, Trash2, Search, X, Loader2, ChevronRight, MessageCircle, Play, GitBranch, ChevronDown, Clock } from 'lucide-react'
 
 interface SessionListProps {
   activeSessionId?: string | null
@@ -74,6 +75,84 @@ function groupSessionsByDate(sessions: ChatSession[]): { group: DateGroup; sessi
 }
 
 // ============================================================================
+// Spawned badge colors by spawn type
+// ============================================================================
+
+const SPAWN_TYPE_STYLES: Record<string, { bg: string; text: string; label: string }> = {
+  runner: { bg: 'bg-blue-500/15', text: 'text-blue-400', label: 'runner' },
+  conversation: { bg: 'bg-violet-500/15', text: 'text-violet-400', label: 'spawned' },
+  delegation: { bg: 'bg-amber-500/15', text: 'text-amber-400', label: 'delegated' },
+}
+
+function SpawnedBadge({ spawnedBy }: { spawnedBy: SpawnedBy }) {
+  const style = SPAWN_TYPE_STYLES[spawnedBy.type] || SPAWN_TYPE_STYLES.conversation
+  return (
+    <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-medium ${style.bg} ${style.text} shrink-0`}>
+      <GitBranch className="w-2.5 h-2.5" />
+      {style.label}
+    </span>
+  )
+}
+
+// ============================================================================
+// Expandable children indicator
+// ============================================================================
+
+function formatDuration(startedAt: string): string {
+  const start = new Date(startedAt).getTime()
+  const now = new Date().getTime()
+  const diffMs = now - start
+  const diffMins = Math.floor(diffMs / 60000)
+  if (diffMins < 1) return '<1m'
+  if (diffMins < 60) return `${diffMins}m`
+  const diffHours = Math.floor(diffMins / 60)
+  return `${diffHours}h ${diffMins % 60}m`
+}
+
+function ChildrenIndicator({ sessionId, onSelect }: { sessionId: string; onSelect: (id: string, turnIndex?: number, title?: string) => void }) {
+  const { runs, isLoading } = useDetachedRuns(sessionId)
+  const [expanded, setExpanded] = useState(false)
+
+  if (isLoading || runs.length === 0) return null
+
+  return (
+    <div className="mt-0.5">
+      <button
+        onClick={(e) => { e.stopPropagation(); setExpanded(!expanded) }}
+        className="flex items-center gap-1 text-[10px] text-amber-400/80 hover:text-amber-300 transition-colors"
+      >
+        <ChevronDown className={`w-2.5 h-2.5 transition-transform ${expanded ? '' : '-rotate-90'}`} />
+        <PulseIndicator variant="pending" size={6} />
+        <span>{runs.length} child{runs.length > 1 ? 'ren' : ''}</span>
+      </button>
+
+      {expanded && (
+        <div className="ml-2 mt-1 border-l border-white/[0.06] pl-2 space-y-0.5">
+          {runs.map((run) => (
+            <button
+              key={run.sessionId}
+              onClick={(e) => { e.stopPropagation(); onSelect(run.sessionId, undefined, run.title) }}
+              className="w-full text-left flex items-center gap-1.5 py-0.5 hover:bg-white/[0.04] rounded px-1 transition-colors group/child"
+            >
+              {run.isStreaming ? (
+                <PulseIndicator variant="active" size={6} />
+              ) : (
+                <span className="w-1.5 h-1.5 rounded-full bg-gray-600 shrink-0" />
+              )}
+              <span className="text-[10px] text-gray-400 truncate flex-1">{run.title}</span>
+              <span className="flex items-center gap-0.5 text-[9px] text-gray-600 shrink-0">
+                <Clock className="w-2.5 h-2.5" />
+                {formatDuration(run.startedAt)}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ============================================================================
 // SessionList component
 // ============================================================================
 
@@ -125,6 +204,9 @@ export const SessionList = memo(function SessionList({ activeSessionId, onSelect
 
   // Active workspace from global atom
   const activeWsSlug = useAtomValue(activeWorkspaceSlugAtom)
+
+  // Show/hide spawned sessions toggle
+  const [showSpawned, setShowSpawned] = useAtom(showSpawnedSessionsAtom)
 
   // Filter state
   const [projects, setProjects] = useState<Project[]>([])
@@ -264,8 +346,13 @@ export const SessionList = memo(function SessionList({ activeSessionId, onSelect
     }
   }, [debouncedQuery, selectedProject])
 
-  // Group sessions by date (backend handles workspace/project filtering via API params)
-  const groupedSessions = useMemo(() => groupSessionsByDate(sessions), [sessions])
+  // Filter out spawned sessions when toggle is off, then group by date
+  const filteredSessions = useMemo(() => {
+    if (showSpawned) return sessions
+    return sessions.filter((s) => !s.spawned_by)
+  }, [sessions, showSpawned])
+
+  const groupedSessions = useMemo(() => groupSessionsByDate(filteredSessions), [filteredSessions])
 
   const handleDelete = async (e: React.MouseEvent, sessionId: string) => {
     e.stopPropagation()
@@ -330,7 +417,7 @@ export const SessionList = memo(function SessionList({ activeSessionId, onSelect
         }`}
       >
         <div className="flex-1 min-w-0">
-          {/* Title + streaming indicator + mode dot */}
+          {/* Title + streaming indicator + mode dot + spawned badge */}
           <div className="flex items-center gap-1.5">
             {streamingSessions.has(session.id) && (
               <PulseIndicator variant="active" size={8} />
@@ -343,6 +430,9 @@ export const SessionList = memo(function SessionList({ activeSessionId, onSelect
                 className={`shrink-0 w-1.5 h-1.5 rounded-full ${MODE_DOT_COLORS[session.permission_mode] ?? 'bg-gray-400'}`}
                 title={session.permission_mode}
               />
+            )}
+            {session.spawned_by && (
+              <SpawnedBadge spawnedBy={session.spawned_by} />
             )}
           </div>
 
@@ -359,18 +449,8 @@ export const SessionList = memo(function SessionList({ activeSessionId, onSelect
             )
           )}
 
-          {/* Detached runs indicator */}
-          {activeRuns.has(session.id) && (() => {
-            const info = activeRuns.get(session.id)!
-            return (
-              <div className="flex items-center gap-1 mt-0.5">
-                <PulseIndicator variant="pending" size={6} />
-                <span className="text-[10px] text-amber-400/80">
-                  {info.runCount} run{info.runCount > 1 ? 's' : ''} in progress
-                </span>
-              </div>
-            )
-          })()}
+          {/* Expandable children indicator */}
+          <ChildrenIndicator sessionId={session.id} onSelect={onSelect} />
 
           {/* CWD */}
           {session.cwd && (
@@ -485,6 +565,28 @@ export const SessionList = memo(function SessionList({ activeSessionId, onSelect
             icon={<Folder className="w-3 h-3" />}
           />
         )}
+
+        {/* Show spawned sessions toggle */}
+        <label className="flex items-center gap-2 cursor-pointer select-none py-0.5">
+          <button
+            role="switch"
+            aria-checked={showSpawned}
+            onClick={() => setShowSpawned(!showSpawned)}
+            className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors ${
+              showSpawned ? 'bg-indigo-500/60' : 'bg-white/[0.08]'
+            }`}
+          >
+            <span
+              className={`inline-block h-2.5 w-2.5 rounded-full bg-white transition-transform ${
+                showSpawned ? 'translate-x-3.5' : 'translate-x-0.5'
+              }`}
+            />
+          </button>
+          <span className="text-[10px] text-gray-500 flex items-center gap-1">
+            <GitBranch className="w-2.5 h-2.5" />
+            Show spawned
+          </span>
+        </label>
       </div>
 
       {/* Content area: session list or search results */}
@@ -584,7 +686,7 @@ export const SessionList = memo(function SessionList({ activeSessionId, onSelect
             <Loader2 className="w-4 h-4 mr-2 animate-spin" />
             Loading...
           </div>
-        ) : sessions.length === 0 ? (
+        ) : filteredSessions.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-8 text-gray-600 text-sm">
             <MessageCircle className="w-6 h-6 mb-2 text-gray-700" />
             No conversations yet
