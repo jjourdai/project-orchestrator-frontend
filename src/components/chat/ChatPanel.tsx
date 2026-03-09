@@ -2,7 +2,7 @@ import { useAtom } from 'jotai'
 import { chatPanelModeAtom, chatPanelWidthAtom, chatScrollToTurnAtom, chatPermissionConfigAtom, chatSelectedProjectAtom, chatAllProjectsModeAtom, chatWorkspaceHasProjectsAtom, activeWorkspaceSlugAtom } from '@/atoms'
 import { useChat, useDetachedRuns, useWindowFullscreen } from '@/hooks'
 import { chatApi } from '@/services/chat'
-import { Plus, X, Menu, Settings, Minimize2, Maximize2, Loader2, FolderPlus } from 'lucide-react'
+import { Plus, X, Menu, Settings, Minimize2, Maximize2, Loader2, FolderPlus, TreePine, ArrowLeft } from 'lucide-react'
 import { ChatMessages } from './ChatMessages'
 import { ChatInput, type PrefillPayload } from './ChatInput'
 import { CompactionBanner } from './CompactionBanner'
@@ -10,7 +10,9 @@ import { DetachedRunsPanel } from './DetachedRunsPanel'
 import { SessionList } from './SessionList'
 import { ProjectSelect } from './ProjectSelect'
 import { PermissionSettingsPanel } from './PermissionSettingsPanel'
-import { useState, useCallback, useRef, useEffect } from 'react'
+import { SessionBreadcrumb } from './SessionBreadcrumb'
+import { DiscussionTreeView } from '@/components/discussions/DiscussionTreeView'
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { useSetAtom, useAtomValue } from 'jotai'
 import { Link } from 'react-router-dom'
 import { isTauri } from '@/services/env'
@@ -47,6 +49,7 @@ export function ChatPanel() {
   const [sessionTitle, setSessionTitle] = useState<string | null>(null)
   const [isMobile, setIsMobile] = useState(false)
   const [prefill, setPrefill] = useState<PrefillPayload | null>(null)
+  const [showAgentTree, setShowAgentTree] = useState(false)
   const chat = useChat()
   const detachedRuns = useDetachedRuns(chat.sessionId)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -185,6 +188,40 @@ export function ChatPanel() {
     ? 'New Chat'
     : sessionTitle || 'Chat'
 
+  // Spawned-by navigation: derive parent session ID from session metadata
+  const spawnedBy = chat.sessionMeta?.spawnedBy
+  const parentSessionId = useMemo(() => {
+    if (!spawnedBy) return null
+    if (spawnedBy.type === 'conversation') return spawnedBy.parent_session_id
+    // runner-spawned sessions don't have a direct parent to navigate back to
+    return null
+  }, [spawnedBy])
+
+  // The root session ID for tree view — use parent if we're a child, otherwise current
+  const rootSessionId = parentSessionId || chat.sessionId
+
+  // Whether session has children (show Agent Tree button)
+  const hasChildren = detachedRuns.runs.length > 0
+
+  const handleBackToParent = useCallback(() => {
+    if (!parentSessionId) return
+    chat.loadSession(parentSessionId)
+    setSessionTitle(null)
+    setShowAgentTree(false)
+  }, [parentSessionId, chat.loadSession])
+
+  const handleTreeNavigate = useCallback((targetSessionId: string) => {
+    chat.loadSession(targetSessionId)
+    setSessionTitle(null)
+    setShowAgentTree(false)
+  }, [chat.loadSession])
+
+  // Reset agent tree panel when session changes
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- sync reset on session change
+    setShowAgentTree(false)
+  }, [chat.sessionId])
+
   // --- FULLSCREEN LAYOUT: sidebar + conversation side by side ---
   // On mobile (<768px): sidebar is a full-screen overlay toggled via hamburger
   // On desktop: sidebar is a permanent 288px column
@@ -303,9 +340,19 @@ export function ChatPanel() {
               >
                 <Plus className="w-4 h-4" />
               </button>
+              {/* Agent Tree toggle — visible when session has children */}
+              {hasChildren && chat.sessionId && (
+                <button
+                  onClick={() => { setShowAgentTree(!showAgentTree); setShowSettings(false) }}
+                  className={`p-1.5 rounded-md transition-colors ${showAgentTree ? 'text-emerald-400 bg-emerald-500/10' : 'text-gray-400 hover:text-gray-200 hover:bg-white/[0.04]'}`}
+                  title="Agent Tree"
+                >
+                  <TreePine className="w-4 h-4" />
+                </button>
+              )}
               {/* Permission settings gear icon */}
               <button
-                onClick={() => setShowSettings(!showSettings)}
+                onClick={() => { setShowSettings(!showSettings); setShowAgentTree(false) }}
                 className={`relative p-1.5 rounded-md transition-colors ${showSettings ? 'text-indigo-400 bg-indigo-500/10' : 'text-gray-400 hover:text-gray-200 hover:bg-white/[0.04]'}`}
                 title="Permission settings"
               >
@@ -331,6 +378,26 @@ export function ChatPanel() {
             </div>
           </div>
 
+          {/* Back to parent button — shown when session is spawned */}
+          {parentSessionId && (
+            <button
+              onClick={handleBackToParent}
+              className="flex items-center gap-1.5 px-4 py-1.5 bg-white/[0.02] border-b border-white/[0.06] text-xs text-indigo-400 hover:text-indigo-300 hover:bg-white/[0.04] transition-colors w-full text-left"
+            >
+              <ArrowLeft className="w-3 h-3 shrink-0" />
+              Back to parent
+            </button>
+          )}
+
+          {/* Session breadcrumb — shown when session is spawned */}
+          {parentSessionId && rootSessionId && chat.sessionId && (
+            <SessionBreadcrumb
+              sessionId={chat.sessionId}
+              rootSessionId={rootSessionId}
+              onNavigate={handleTreeNavigate}
+            />
+          )}
+
           {/* Reconnecting / Disconnected banner */}
           {!isNewConversation && chat.wsStatus === 'reconnecting' && (
             <div className="px-4 py-1.5 bg-amber-500/10 border-b border-amber-500/20 text-amber-400 text-xs flex items-center gap-1.5">
@@ -353,49 +420,59 @@ export function ChatPanel() {
           ) : isNewConversation && !hasContext ? (
             <NoProjectsPlaceholder wsSlug={activeWsSlug} />
           ) : (
-            <>
-              {/* Detached runs panel — fullscreen layout */}
-              {detachedRuns.runs.length > 0 && (
-                <DetachedRunsPanel
-                  runs={detachedRuns.runs}
-                  hasActiveRuns={detachedRuns.hasActiveRuns}
-                  onViewRun={handleViewRun}
-                  onStopRun={handleStopRun}
+            <div className="flex flex-1 min-h-0">
+              {/* Main conversation column */}
+              <div className="flex flex-col flex-1 min-w-0">
+                {/* Detached runs panel — fullscreen layout */}
+                {detachedRuns.runs.length > 0 && (
+                  <DetachedRunsPanel
+                    runs={detachedRuns.runs}
+                    hasActiveRuns={detachedRuns.hasActiveRuns}
+                    onViewRun={handleViewRun}
+                    onStopRun={handleStopRun}
+                  />
+                )}
+                <ChatMessages
+                  messages={chat.messages}
+                  isStreaming={chat.isStreaming}
+                  isLoadingHistory={chat.isLoadingHistory}
+                  isReplaying={chat.isReplaying}
+                  hasOlderMessages={chat.hasOlderMessages}
+                  isLoadingOlder={chat.isLoadingOlder}
+                  onLoadOlder={chat.loadOlderMessages}
+                  hasNewerMessages={chat.hasNewerMessages}
+                  isLoadingNewer={chat.isLoadingNewer}
+                  onLoadNewer={chat.loadNewerMessages}
+                  hasLiveActivity={chat.hasLiveActivity}
+                  onJumpToTail={chat.jumpToTail}
+                  onRespondPermission={chat.respondPermission}
+                  onRespondInput={chat.respondInput}
+                  onContinue={handleContinue}
+                  onQuickAction={handleQuickAction}
+                  onSelectSession={handleSelectSession}
+                  selectedProject={selectedProject}
                 />
+                <CompactionBanner visible={chat.isCompacting} />
+                <ChatInput
+                  onSend={handleSend}
+                  onInterrupt={chat.interrupt}
+                  isStreaming={chat.isStreaming}
+                  disabled={isNewConversation && !hasContext}
+                  sessionId={chat.sessionId}
+                  onChangePermissionMode={chat.changePermissionMode}
+                  onChangeModel={chat.changeModel}
+                  onChangeAutoContinue={chat.changeAutoContinue}
+                  prefill={prefill}
+                />
+              </div>
+
+              {/* Agent Tree right panel — fullscreen layout */}
+              {showAgentTree && rootSessionId && (
+                <div className="w-80 shrink-0 border-l border-white/[0.06] flex flex-col overflow-y-auto p-3">
+                  <DiscussionTreeView sessionId={rootSessionId} onNavigate={handleTreeNavigate} />
+                </div>
               )}
-              <ChatMessages
-                messages={chat.messages}
-                isStreaming={chat.isStreaming}
-                isLoadingHistory={chat.isLoadingHistory}
-                isReplaying={chat.isReplaying}
-                hasOlderMessages={chat.hasOlderMessages}
-                isLoadingOlder={chat.isLoadingOlder}
-                onLoadOlder={chat.loadOlderMessages}
-                hasNewerMessages={chat.hasNewerMessages}
-                isLoadingNewer={chat.isLoadingNewer}
-                onLoadNewer={chat.loadNewerMessages}
-                hasLiveActivity={chat.hasLiveActivity}
-                onJumpToTail={chat.jumpToTail}
-                onRespondPermission={chat.respondPermission}
-                onRespondInput={chat.respondInput}
-                onContinue={handleContinue}
-                onQuickAction={handleQuickAction}
-                onSelectSession={handleSelectSession}
-                selectedProject={selectedProject}
-              />
-              <CompactionBanner visible={chat.isCompacting} />
-              <ChatInput
-                onSend={handleSend}
-                onInterrupt={chat.interrupt}
-                isStreaming={chat.isStreaming}
-                disabled={isNewConversation && !hasContext}
-                sessionId={chat.sessionId}
-                onChangePermissionMode={chat.changePermissionMode}
-                onChangeModel={chat.changeModel}
-                onChangeAutoContinue={chat.changeAutoContinue}
-                prefill={prefill}
-              />
-            </>
+            </div>
           )}
         </div>
       </div>
@@ -462,9 +539,19 @@ export function ChatPanel() {
           >
             <Plus className="w-4 h-4" />
           </button>
+          {/* Agent Tree toggle — visible when session has children */}
+          {hasChildren && chat.sessionId && (
+            <button
+              onClick={() => { setShowAgentTree(!showAgentTree); setShowSettings(false); setShowSessions(false) }}
+              className={`p-1.5 rounded-md transition-colors ${showAgentTree ? 'text-emerald-400 bg-emerald-500/10' : 'text-gray-400 hover:text-gray-200 hover:bg-white/[0.04]'}`}
+              title="Agent Tree"
+            >
+              <TreePine className="w-4 h-4" />
+            </button>
+          )}
           {/* Permission settings gear icon */}
           <button
-            onClick={() => { setShowSettings(!showSettings); setShowSessions(false) }}
+            onClick={() => { setShowSettings(!showSettings); setShowSessions(false); setShowAgentTree(false) }}
             className={`relative p-1.5 rounded-md transition-colors ${showSettings ? 'text-indigo-400 bg-indigo-500/10' : 'text-gray-400 hover:text-gray-200 hover:bg-white/[0.04]'}`}
             title="Permission settings"
           >
@@ -489,6 +576,26 @@ export function ChatPanel() {
           </button>
         </div>
       </div>
+
+      {/* Back to parent button — shown when session is spawned */}
+      {parentSessionId && (
+        <button
+          onClick={handleBackToParent}
+          className="flex items-center gap-1.5 px-4 py-1.5 bg-white/[0.02] border-b border-white/[0.06] text-xs text-indigo-400 hover:text-indigo-300 hover:bg-white/[0.04] transition-colors w-full text-left"
+        >
+          <ArrowLeft className="w-3 h-3 shrink-0" />
+          Back to parent
+        </button>
+      )}
+
+      {/* Session breadcrumb — shown when session is spawned */}
+      {parentSessionId && rootSessionId && chat.sessionId && (
+        <SessionBreadcrumb
+          sessionId={chat.sessionId}
+          rootSessionId={rootSessionId}
+          onNavigate={handleTreeNavigate}
+        />
+      )}
 
       {/* Reconnecting / Disconnected banner */}
       {!isNewConversation && chat.wsStatus === 'reconnecting' && (
@@ -515,6 +622,10 @@ export function ChatPanel() {
           onSelect={handleSelectSession}
           onClose={() => setShowSessions(false)}
         />
+      ) : showAgentTree && rootSessionId ? (
+        <div className="flex-1 overflow-y-auto p-3">
+          <DiscussionTreeView sessionId={rootSessionId} onNavigate={handleTreeNavigate} />
+        </div>
       ) : isNewConversation && !hasContext ? (
         <NoProjectsPlaceholder wsSlug={activeWsSlug} />
       ) : (

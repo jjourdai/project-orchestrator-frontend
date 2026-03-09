@@ -19,9 +19,11 @@ import { InlineConversationPanel } from './InlineConversationPanel'
 interface DiscussionTreeViewProps {
   /** Root session ID whose tree to display */
   sessionId: string
+  /** When provided, clicking a node navigates to that session instead of showing the inline panel */
+  onNavigate?: (sessionId: string) => void
 }
 
-export function DiscussionTreeView({ sessionId }: DiscussionTreeViewProps) {
+export function DiscussionTreeView({ sessionId, onNavigate }: DiscussionTreeViewProps) {
   const { tree, isLoading, error, refresh } = useDiscussionTree(sessionId)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
 
@@ -29,6 +31,10 @@ export function DiscussionTreeView({ sessionId }: DiscussionTreeViewProps) {
   const selectedTitle = selectedNodeId ? findNodeTitle(tree, selectedNodeId) : null
 
   const handleSelectNode = (nodeSessionId: string) => {
+    if (onNavigate) {
+      onNavigate(nodeSessionId)
+      return
+    }
     setSelectedNodeId((prev) => (prev === nodeSessionId ? null : nodeSessionId))
   }
 
