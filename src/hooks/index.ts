@@ -30,3 +30,4 @@ export { useViewTransition, useWorkspaceViewTransition } from './useViewTransiti
 export type { TransitionType, NavDirection } from './useViewTransition'
 export { useDetachedRuns, useActiveRunTracker } from './useDetachedRuns'
 export type { DetachedRun, ActiveRunInfo } from './useDetachedRuns'
+export { useDiscussionTree } from './useDiscussionTree'
