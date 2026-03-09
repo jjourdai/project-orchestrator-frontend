@@ -39,32 +39,32 @@ export function PageHeader({
 }: PageHeaderProps) {
   return (
     <div className="space-y-3">
-      {/* Line 0: Parent navigation chips */}
-      {parentLinks && parentLinks.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2">
-          {parentLinks.map((link) => {
-            const Icon = link.icon
-            return (
-              <Link
-                key={`${link.label}-${link.href}`}
-                to={link.href}
-                className="inline-flex items-center gap-1.5 bg-white/[0.06] border border-white/[0.08] rounded-full px-2.5 py-1 text-xs transition-colors hover:bg-white/[0.10] hover:border-white/[0.14]"
-              >
-                <Icon className="w-3.5 h-3.5 text-gray-500" />
-                <span className="text-gray-500">{link.label}</span>
-                <span className="text-gray-300 truncate max-w-[180px]">{link.name}</span>
-              </Link>
-            )
-          })}
-        </div>
-      )}
-
-      {/* Line 1: Title + Status + Overflow menu */}
+      {/* Line 1: Parent chips + Title (left) | Actions + Status + Overflow (right) */}
       <div className="flex items-start justify-between gap-3">
-        <h1
-          className="font-bold tracking-tight text-gray-100 truncate min-w-0"
-          style={{ fontSize: 'var(--fluid-2xl)', ...(viewTransitionName ? { viewTransitionName } : undefined) }}
-        >{title}</h1>
+        <div className="min-w-0">
+          {parentLinks && parentLinks.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
+              {parentLinks.map((link) => {
+                const Icon = link.icon
+                return (
+                  <Link
+                    key={`${link.label}-${link.href}`}
+                    to={link.href}
+                    className="inline-flex items-center gap-1 bg-white/[0.06] border border-white/[0.08] rounded-full px-2 py-0.5 text-[11px] transition-colors hover:bg-white/[0.10] hover:border-white/[0.14]"
+                  >
+                    <Icon className="w-3 h-3 text-gray-500" />
+                    <span className="text-gray-500">{link.label}</span>
+                    <span className="text-gray-300 truncate max-w-[160px]">{link.name}</span>
+                  </Link>
+                )
+              })}
+            </div>
+          )}
+          <h1
+            className="font-bold tracking-tight text-gray-100 truncate"
+            style={{ fontSize: 'var(--fluid-2xl)', ...(viewTransitionName ? { viewTransitionName } : undefined) }}
+          >{title}</h1>
+        </div>
         <div className="flex items-center gap-2 shrink-0">
           {actions}
           {status}
@@ -82,7 +82,7 @@ export function PageHeader({
       {/* Line 3: Children (left) + Metadata pills (right) */}
       {(children || (metadata && metadata.length > 0)) && (
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">{children}</div>
+          {children && <div className="flex items-center gap-2">{children}</div>}
           {metadata && metadata.length > 0 && (
             <div className="flex flex-wrap items-center gap-2">
               {metadata.map((item) => (

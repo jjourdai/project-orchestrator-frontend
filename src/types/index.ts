@@ -1038,6 +1038,24 @@ export interface DependencyGraphNode {
   title?: string
   status: TaskStatus
   priority?: number
+  tags?: string[]
+  affected_files?: string[]
+  assigned_to?: string
+  acceptance_criteria?: string[]
+  /** Number of steps for this task */
+  step_count?: number
+  /** Number of completed steps */
+  completed_step_count?: number
+  /** Number of notes linked to this task */
+  note_count?: number
+  /** Number of decisions linked to this task */
+  decision_count?: number
+  /** Step count (legacy alias for backward compat) */
+  stepCount?: number
+  /** Completed step count (legacy alias) */
+  completedStepCount?: number
+  /** Assigned to (legacy alias) */
+  assignedTo?: string
 }
 
 export interface DependencyGraphEdge {
@@ -1045,9 +1063,17 @@ export interface DependencyGraphEdge {
   to: string
 }
 
+export interface FileConflict {
+  task_a: string
+  task_b: string
+  shared_files: string[]
+}
+
 export interface DependencyGraph {
   nodes: DependencyGraphNode[]
   edges: DependencyGraphEdge[]
+  /** File conflicts between tasks */
+  conflicts?: FileConflict[]
 }
 
 // ============================================================================
@@ -1068,12 +1094,6 @@ export interface Wave {
   tasks: WaveTask[]
   task_count: number
   split_from_conflicts: boolean
-}
-
-export interface FileConflict {
-  task_a: string
-  task_b: string
-  shared_files: string[]
 }
 
 export interface WaveSummary {

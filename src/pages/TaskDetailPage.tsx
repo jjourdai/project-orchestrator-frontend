@@ -291,6 +291,15 @@ export function TaskDetailPage() {
           ...(task.estimated_complexity ? [{ label: 'Est. complexity', value: String(task.estimated_complexity) }] : []),
           ...(task.actual_complexity ? [{ label: 'Actual complexity', value: String(task.actual_complexity) }] : []),
         ]}
+        actions={
+          tags.length > 0 ? (
+            <div className="flex flex-wrap gap-1">
+              {tags.map((tag, index) => (
+                <Badge key={`${tag}-${index}`}>{tag}</Badge>
+              ))}
+            </div>
+          ) : undefined
+        }
         overflowActions={[
           { label: '3D View', onClick: () => setShow3D(true) },
           { label: 'Edit', onClick: () => editTaskDialog.open({ title: 'Edit Task' }) },
@@ -308,15 +317,7 @@ export function TaskDetailPage() {
             }
           }) }
         ]}
-      >
-        {tags.length > 0 && (
-          <div className="flex flex-wrap gap-1">
-            {tags.map((tag, index) => (
-              <Badge key={`${tag}-${index}`}>{tag}</Badge>
-            ))}
-          </div>
-        )}
-      </PageHeader>
+      />
 
       <SectionNav sections={sections} activeSection={activeSection} />
 
