@@ -34,6 +34,7 @@ import {
   FeatureGraphsPage,
   FeatureGraphDetailPage,
   AdminPage,
+  RunnerDashboard,
 
   NotFoundPage,
   SettingsPage,
@@ -153,6 +154,7 @@ function App() {
                         />
                         <Route path="plans" element={<PlansPage />} />
                         <Route path="plans/:planId" element={<PlanDetailPage />} />
+                        <Route path="plans/:planId/runner" element={<RunnerDashboard />} />
                         <Route path="tasks" element={<TasksPage />} />
                         <Route path="tasks/:taskId" element={<TaskDetailPage />} />
                         <Route path="notes" element={<NotesPage />} />

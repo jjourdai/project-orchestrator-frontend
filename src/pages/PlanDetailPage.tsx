@@ -351,6 +351,7 @@ export function PlanDetailPage() {
           { label: 'Created', value: new Date(plan.created_at).toLocaleDateString() },
         ]}
         overflowActions={[
+          { label: 'Runner Dashboard', onClick: () => navigate(workspacePath(wsSlug, `/plans/${plan.id}/runner`), { type: 'card-click' }) },
           { label: 'Edit', onClick: () => editPlanDialog.open({ title: 'Edit Plan' }) },
           { label: 'Delete', variant: 'danger', onClick: () => confirmDialog.open({
             title: 'Delete Plan',
