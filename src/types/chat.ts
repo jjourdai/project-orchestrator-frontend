@@ -65,6 +65,27 @@ export interface CliInstallResult {
 // CHAT SESSION
 // ============================================================================
 
+// ============================================================================
+// SPAWNED BY (detached sessions)
+// ============================================================================
+
+/** Origin of a detached session — runner or sub-conversation */
+export type SpawnedBy =
+  | { type: 'runner'; run_id: string; plan_id: string }
+  | { type: 'conversation'; parent_session_id: string }
+
+/** A child session with its streaming status */
+export interface DetachedSession {
+  id: string
+  title?: string
+  model: string
+  created_at: string
+  updated_at: string
+  total_cost_usd?: number
+  spawned_by: SpawnedBy
+  is_streaming: boolean
+}
+
 export interface ChatSession {
   id: string
   cli_session_id?: string
@@ -83,6 +104,8 @@ export interface ChatSession {
   permission_mode?: PermissionMode
   /** Additional directories exposed to Claude CLI (--add-dir) */
   add_dirs?: string[]
+  /** Origin of this session if detached (null = normal conversation) */
+  spawned_by?: SpawnedBy | null
 }
 
 export interface CreateSessionRequest {

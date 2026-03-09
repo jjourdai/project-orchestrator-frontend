@@ -6,6 +6,7 @@ import type {
   CliVersionStatus,
   CreateSessionRequest,
   CreateSessionResponse,
+  DetachedSession,
   DetectPathResponse,
   PaginatedResponse,
   MessageHistoryResponse,
@@ -64,6 +65,14 @@ export const chatApi = {
 
   updateChatConfig: (patch: Partial<ChatConfig>) =>
     api.patch<ChatConfig>('/chat/config', patch),
+
+  /** Get child sessions (detached) of a parent session, with streaming status */
+  getSessionChildren: (sessionId: string) =>
+    api.get<DetachedSession[]>(`/chat/sessions/${sessionId}/children`),
+
+  /** Interrupt a running session (used to stop detached runs) */
+  interruptSession: (sessionId: string) =>
+    api.post(`/chat/sessions/${sessionId}/interrupt`, {}),
 
   // PATH detection
   detectPath: () =>
