@@ -56,7 +56,7 @@ export function PlanDetailPage() {
   const [linkedMilestones, setLinkedMilestones] = useState<Array<{ id: string; title: string; href: string; type: 'workspace' | 'project' }>>([])
   const [waves, setWaves] = useState<WaveComputationResult | null>(null)
   const [wavesLoading, setWavesLoading] = useState(false)
-  const [graphViewMode, setGraphViewMode] = useState<'dag' | 'waves' | '3d'>('dag')
+  const [graphViewMode, setGraphViewMode] = useState<'flow' | 'waves' | '3d'>('flow')
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
 
   const fetchWaves = useCallback(async () => {
@@ -429,7 +429,7 @@ export function PlanDetailPage() {
           <CardHeader>
             <div className="flex items-center justify-between w-full">
               <div className="flex items-center gap-3">
-                <CardTitle>{graphViewMode === 'waves' ? 'Execution Waves' : graphViewMode === '3d' ? '3D Universe' : 'Dependency Graph'}</CardTitle>
+                <CardTitle>{graphViewMode === 'waves' ? 'Execution Waves' : graphViewMode === '3d' ? '3D Universe' : 'Task Flow'}</CardTitle>
                 <span className="text-sm text-gray-500">
                   {graphViewMode === 'waves' && waves
                     ? `${waves.summary.total_waves} waves · ${waves.summary.total_tasks} tasks`
@@ -439,17 +439,17 @@ export function PlanDetailPage() {
                   }
                 </span>
               </div>
-              {/* Toggle DAG / Waves / 3D */}
+              {/* Toggle Flow / Waves / 3D */}
               <div className="flex items-center rounded-lg bg-gray-800/60 border border-gray-700/50 p-0.5">
                 <button
-                  onClick={() => setGraphViewMode('dag')}
+                  onClick={() => setGraphViewMode('flow')}
                   className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
-                    graphViewMode === 'dag'
+                    graphViewMode === 'flow'
                       ? 'bg-indigo-600 text-white font-medium shadow-sm'
                       : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'
                   }`}
                 >
-                  DAG
+                  Flow
                 </button>
                 <button
                   onClick={() => {

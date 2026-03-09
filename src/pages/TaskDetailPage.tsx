@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useMemo, lazy, Suspense } from 'react'
 import { useParams, Link, useLocation } from 'react-router-dom'
 import { useAtomValue } from 'jotai'
-import { ClipboardList, FolderKanban, GitCommitHorizontal, Pencil } from 'lucide-react'
+import { ClipboardList, FolderKanban, GitCommitHorizontal, Pencil, Box } from 'lucide-react'
 
 const TaskUniverse3D = lazy(() => import('@/components/tasks/TaskUniverse3D'))
 import { Card, CardHeader, CardTitle, CardContent, LoadingPage, ErrorState, Badge, Button, ConfirmDialog, FormDialog, LinkEntityDialog, TaskStatusBadge, InteractiveStepStatusBadge, InteractiveDecisionStatusBadge, ProgressBar, PageHeader, StatusSelect, SectionNav, ViewToggle } from '@/components/ui'
@@ -323,16 +323,21 @@ export function TaskDetailPage() {
           ...(task.actual_complexity ? [{ label: 'Actual complexity', value: String(task.actual_complexity) }] : []),
         ]}
         actions={
-          tags.length > 0 ? (
-            <div className="flex flex-wrap gap-1">
-              {tags.map((tag, index) => (
-                <Badge key={`${tag}-${index}`}>{tag}</Badge>
-              ))}
-            </div>
-          ) : undefined
+          <div className="flex items-center gap-2">
+            {tags.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {tags.map((tag, index) => (
+                  <Badge key={`${tag}-${index}`}>{tag}</Badge>
+                ))}
+              </div>
+            )}
+            <Button size="sm" variant="secondary" onClick={() => setShow3D(true)}>
+              <Box className="w-3.5 h-3.5 mr-1.5" />
+              3D View
+            </Button>
+          </div>
         }
         overflowActions={[
-          { label: '3D View', onClick: () => setShow3D(true) },
           { label: 'Edit', onClick: () => editTaskDialog.open({ title: 'Edit Task' }) },
           { label: 'Delete', variant: 'danger', onClick: () => confirmDialog.open({
             title: 'Delete Task',
