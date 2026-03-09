@@ -12,12 +12,12 @@ import {
 } from '@xyflow/react'
 import dagre from 'dagre'
 import { Link } from 'react-router-dom'
-import { AlertTriangle, FileCode2, StickyNote, BookOpen, ExternalLink, CheckCircle2, Circle, Loader2, SkipForward, MessageSquare, FileSearch } from 'lucide-react'
+import { AlertTriangle, FileCode2, StickyNote, BookOpen, ExternalLink, CheckCircle2, Circle, Loader2, SkipForward, MessageSquare, FileSearch, Clock, Bot } from 'lucide-react'
 import { PulseIndicator } from '@/components/ui'
 import { useWorkspaceSlug } from '@/hooks'
 import { workspacePath } from '@/utils/paths'
 import { tasksApi, getEventBus } from '@/services'
-import type { DependencyGraph, DependencyGraphStep, TaskStatus, StepStatus, CrudEvent } from '@/types'
+import type { DependencyGraph, DependencyGraphStep, TaskStatus, StepStatus, ActiveAgentInfo, CrudEvent } from '@/types'
 import '@xyflow/react/dist/style.css'
 
 // ============================================================================
@@ -56,6 +56,8 @@ interface TaskNodeData extends Record<string, unknown> {
   /** Files that conflict with other tasks */
   conflictFiles?: string[]
   hasConflicts?: boolean
+  /** Active agent info (from real-time tracking) */
+  activeAgent?: ActiveAgentInfo | null
   onSelect?: (taskId: string) => void
 }
 
@@ -174,10 +176,125 @@ function getLayoutedElements(
 }
 
 // ============================================================================
-// ENRICHED TASK NODE (with inline step list)
+// DURATION FORMATTER
+// ============================================================================
+
+function formatDuration(secs: number): string {
+  if (secs < 60) return `${Math.round(secs)}s`
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ${Math.round(secs % 60)}s`
+  return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`
+}
+
+// ============================================================================
+// RICH TOOLTIP
+// ============================================================================
+
+function TaskTooltip({ data }: { data: TaskNodeData }) {
+  const colors = statusColors[data.status] || statusColors.pending
+  const stepCount = data.stepCount ?? 0
+  const completedStepCount = data.completedStepCount ?? 0
+
+  return (
+    <div
+      className="absolute left-1/2 bottom-full mb-2 -translate-x-1/2 z-50 pointer-events-none"
+      style={{ minWidth: 220, maxWidth: 300 }}
+    >
+      <div
+        className="rounded-lg p-3 shadow-xl text-xs space-y-2"
+        style={{
+          background: '#1a1a2e',
+          border: `1px solid ${colors.border}`,
+        }}
+      >
+        {/* Status + Priority row */}
+        <div className="flex items-center gap-2">
+          <span
+            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium"
+            style={{ background: colors.bg, color: colors.text, border: `1px solid ${colors.border}` }}
+          >
+            <span
+              className="w-1.5 h-1.5 rounded-full"
+              style={{ background: colors.dot }}
+            />
+            {statusLabels[data.status]}
+          </span>
+          {data.priority != null && data.priority > 0 && (
+            <span className="text-[10px] text-gray-400">P{data.priority}</span>
+          )}
+        </div>
+
+        {/* Title */}
+        <p className="text-gray-200 font-medium leading-snug">{data.label}</p>
+
+        {/* Agent indicator */}
+        {data.activeAgent && (
+          <div className="flex items-center gap-1.5 text-indigo-300">
+            <Bot className="w-3 h-3" />
+            <span>Agent active</span>
+            {data.activeAgent.elapsedSecs != null && (
+              <span className="flex items-center gap-0.5 text-gray-400">
+                <Clock className="w-3 h-3" />
+                {formatDuration(data.activeAgent.elapsedSecs)}
+              </span>
+            )}
+            {data.activeAgent.costUsd != null && (
+              <span className="text-gray-500 ml-auto">${data.activeAgent.costUsd.toFixed(3)}</span>
+            )}
+          </div>
+        )}
+
+        {/* Steps progress */}
+        {stepCount > 0 && (
+          <div className="space-y-1">
+            <div className="flex items-center gap-1 text-gray-400">
+              <span>{completedStepCount}/{stepCount} steps</span>
+            </div>
+            <div className="flex gap-0.5">
+              {Array.from({ length: stepCount }, (_, i) => (
+                <span key={i} className="text-[10px]">
+                  {i < completedStepCount ? '\u2705' : '\u2B1C'}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Tags */}
+        {data.tags && data.tags.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {data.tags.slice(0, 5).map((tag) => (
+              <span
+                key={tag}
+                className="px-1.5 py-0.5 rounded text-[10px] bg-white/[0.08] text-gray-400"
+              >
+                {tag}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* Assigned to */}
+        {data.assignedTo && (
+          <div className="text-gray-500 text-[10px]">
+            Assigned to: <span className="text-gray-300">{data.assignedTo}</span>
+          </div>
+        )}
+      </div>
+      {/* Tooltip arrow */}
+      <div
+        className="absolute left-1/2 -translate-x-1/2 w-2 h-2 rotate-45"
+        style={{ background: '#1a1a2e', borderRight: `1px solid ${colors.border}`, borderBottom: `1px solid ${colors.border}`, bottom: -4 }}
+      />
+    </div>
+  )
+}
+
+// ============================================================================
+// ENRICHED TASK NODE (with inline step list + tooltip on hover)
 // ============================================================================
 
 function TaskNodeComponent({ data }: NodeProps<Node<TaskNodeData>>) {
+  const [hovered, setHovered] = useState(false)
   const colors = statusColors[data.status] || statusColors.pending
   const isInProgress = data.status === 'in_progress'
 
@@ -201,7 +318,14 @@ function TaskNodeComponent({ data }: NodeProps<Node<TaskNodeData>>) {
   )
 
   return (
-    <div className="relative">
+    <div
+      className="relative"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      {/* Tooltip on hover */}
+      {hovered && <TaskTooltip data={data} />}
+
       <div
         onClick={handleClick}
         className={`cursor-pointer transition-all duration-150 hover:scale-[1.02] hover:shadow-lg ${isInProgress ? 'dep-node-pulse' : ''}`}
@@ -236,6 +360,13 @@ function TaskNodeComponent({ data }: NodeProps<Node<TaskNodeData>>) {
           <span className="text-[10px] font-medium" style={{ color: colors.text }}>
             {statusLabels[data.status]}
           </span>
+
+          {/* Active agent indicator */}
+          {data.activeAgent && (
+            <span className="inline-flex items-center gap-0.5 ml-0.5">
+              <Bot className="w-2.5 h-2.5 text-indigo-400" />
+            </span>
+          )}
 
           {isInProgress && data.assignedTo && (
             <span className="inline-flex items-center gap-0.5 ml-0.5">
@@ -757,6 +888,7 @@ export function DependencyGraphView({ graph, taskStatuses, onNodeSelect, classNa
           discussedFiles: node.discussed_files ?? [],
           hasConflicts: conflictFilesArr.length > 0,
           conflictFiles: conflictFilesArr,
+          activeAgent: node.activeAgent,
           onSelect: onNodeSelect,
         },
       }

@@ -1055,6 +1055,14 @@ export interface FeatureGraphSummary {
   entity_count: number
 }
 
+export interface ActiveAgentInfo {
+  sessionId: string
+  isStreaming: boolean
+  costUsd?: number
+  elapsedSecs?: number
+}
+
+
 export interface DependencyGraphNode {
   id: string
   title?: string
@@ -1088,6 +1096,8 @@ export interface DependencyGraphNode {
   child_session_count?: number
   /** Files discussed in linked chat sessions */
   discussed_files?: DiscussedFile[]
+  /** Active agent info (from PR branch real-time tracking) */
+  activeAgent?: ActiveAgentInfo | null
 }
 
 export interface DependencyGraphEdge {
