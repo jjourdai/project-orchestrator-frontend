@@ -1,10 +1,12 @@
 import { useAtom } from 'jotai'
 import { chatPanelModeAtom, chatPanelWidthAtom, chatScrollToTurnAtom, chatPermissionConfigAtom, chatSelectedProjectAtom, chatAllProjectsModeAtom, chatWorkspaceHasProjectsAtom, activeWorkspaceSlugAtom } from '@/atoms'
-import { useChat, useWindowFullscreen } from '@/hooks'
+import { useChat, useDetachedRuns, useWindowFullscreen } from '@/hooks'
+import { chatApi } from '@/services/chat'
 import { Plus, X, Menu, Settings, Minimize2, Maximize2, Loader2, FolderPlus } from 'lucide-react'
 import { ChatMessages } from './ChatMessages'
 import { ChatInput, type PrefillPayload } from './ChatInput'
 import { CompactionBanner } from './CompactionBanner'
+import { DetachedRunsPanel } from './DetachedRunsPanel'
 import { SessionList } from './SessionList'
 import { ProjectSelect } from './ProjectSelect'
 import { PermissionSettingsPanel } from './PermissionSettingsPanel'
@@ -46,6 +48,7 @@ export function ChatPanel() {
   const [isMobile, setIsMobile] = useState(false)
   const [prefill, setPrefill] = useState<PrefillPayload | null>(null)
   const chat = useChat()
+  const detachedRuns = useDetachedRuns(chat.sessionId)
   const panelRef = useRef<HTMLDivElement>(null)
   const setScrollToTurn = useSetAtom(chatScrollToTurnAtom)
   const permissionConfig = useAtomValue(chatPermissionConfigAtom)
@@ -145,6 +148,15 @@ export function ChatPanel() {
   const handleQuickAction = useCallback((prompt: string, cursorOffset?: number) => {
     // Create a new object reference each time to re-trigger the useEffect in ChatInput
     setPrefill({ text: prompt, cursorOffset })
+  }, [])
+
+  const handleViewRun = useCallback((childSessionId: string) => {
+    chat.loadSession(childSessionId)
+    setSessionTitle(null)
+  }, [chat.loadSession])
+
+  const handleStopRun = useCallback((childSessionId: string) => {
+    chatApi.interruptSession(childSessionId).catch(() => { /* ignore */ })
   }, [])
 
   const handleNewSession = useCallback(() => {
@@ -342,6 +354,15 @@ export function ChatPanel() {
             <NoProjectsPlaceholder wsSlug={activeWsSlug} />
           ) : (
             <>
+              {/* Detached runs panel — fullscreen layout */}
+              {detachedRuns.runs.length > 0 && (
+                <DetachedRunsPanel
+                  runs={detachedRuns.runs}
+                  hasActiveRuns={detachedRuns.hasActiveRuns}
+                  onViewRun={handleViewRun}
+                  onStopRun={handleStopRun}
+                />
+              )}
               <ChatMessages
                 messages={chat.messages}
                 isStreaming={chat.isStreaming}
@@ -498,6 +519,15 @@ export function ChatPanel() {
         <NoProjectsPlaceholder wsSlug={activeWsSlug} />
       ) : (
         <>
+          {/* Detached runs panel — panel/sidebar layout */}
+          {detachedRuns.runs.length > 0 && (
+            <DetachedRunsPanel
+              runs={detachedRuns.runs}
+              hasActiveRuns={detachedRuns.hasActiveRuns}
+              onViewRun={handleViewRun}
+              onStopRun={handleStopRun}
+            />
+          )}
           <ChatMessages
             messages={chat.messages}
             isStreaming={chat.isStreaming}

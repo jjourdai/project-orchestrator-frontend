@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAtomValue } from 'jotai'
 import { chatSessionRefreshAtom, activeWorkspaceSlugAtom } from '@/atoms'
 import { chatApi, getEventBus, workspacesApi } from '@/services'
+import { useActiveRunTracker } from '@/hooks'
 import type {
   ChatSession,
   CrudEvent,
@@ -10,7 +11,7 @@ import type {
   Project,
 } from '@/types'
 import { Select, PulseIndicator } from '@/components/ui'
-import { Folder, Trash2, Search, X, Loader2, ChevronRight, MessageCircle } from 'lucide-react'
+import { Folder, Trash2, Search, X, Loader2, ChevronRight, MessageCircle, Play } from 'lucide-react'
 
 interface SessionListProps {
   activeSessionId?: string | null
@@ -88,6 +89,9 @@ export const SessionList = memo(function SessionList({ activeSessionId, onSelect
 
   // Live refresh via WebSocket CRUD events
   const chatSessionRefresh = useAtomValue(chatSessionRefreshAtom)
+
+  // Track active detached runs per parent session
+  const activeRuns = useActiveRunTracker()
 
   // Track streaming sessions via direct event bus subscription
   const [streamingSessions, setStreamingSessions] = useState<Set<string>>(
@@ -355,6 +359,19 @@ export const SessionList = memo(function SessionList({ activeSessionId, onSelect
             )
           )}
 
+          {/* Detached runs indicator */}
+          {activeRuns.has(session.id) && (() => {
+            const info = activeRuns.get(session.id)!
+            return (
+              <div className="flex items-center gap-1 mt-0.5">
+                <PulseIndicator variant="pending" size={6} />
+                <span className="text-[10px] text-amber-400/80">
+                  {info.runCount} run{info.runCount > 1 ? 's' : ''} in progress
+                </span>
+              </div>
+            )
+          })()}
+
           {/* CWD */}
           {session.cwd && (
             <div className="flex items-center gap-1 mt-0.5 min-w-0">
@@ -574,6 +591,41 @@ export const SessionList = memo(function SessionList({ activeSessionId, onSelect
           </div>
         ) : (
           <div className="py-1">
+            {/* Active runs section — shown when detached runs exist */}
+            {activeRuns.size > 0 && (
+              <div className="border-b border-white/[0.06] pb-2 mb-1">
+                <div className="px-4 pt-2 pb-1.5 flex items-center gap-2">
+                  <PulseIndicator variant="pending" size={6} />
+                  <span className="text-[10px] font-medium text-amber-400 uppercase tracking-wider">
+                    Active runs
+                  </span>
+                  <div className="flex-1 h-px bg-amber-400/10" />
+                  <span className="text-[10px] text-amber-400/60">
+                    {Array.from(activeRuns.values()).reduce((sum, info) => sum + info.runCount, 0)}
+                  </span>
+                </div>
+                {Array.from(activeRuns.entries()).map(([parentId, info]) => {
+                  const parentSession = sessions.find(s => s.id === parentId)
+                  const parentTitle = parentSession?.title || `Session ${parentId.slice(0, 8)}`
+                  return (
+                    <button
+                      key={parentId}
+                      onClick={() => onSelect(parentId, undefined, parentTitle)}
+                      className="w-full text-left px-4 py-1.5 hover:bg-amber-500/[0.06] transition-colors flex items-center gap-2"
+                    >
+                      <Play className="w-3 h-3 text-amber-400/70 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <span className="text-xs text-gray-300 truncate block">{parentTitle}</span>
+                        <span className="text-[10px] text-amber-400/60">
+                          {info.runCount} run{info.runCount > 1 ? 's' : ''} in progress
+                        </span>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+
             {groupedSessions.map(({ group, sessions: groupSessions }) => (
               <div key={group}>
                 {/* Date group header */}
