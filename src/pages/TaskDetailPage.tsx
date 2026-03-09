@@ -3,7 +3,8 @@ import { useParams, Link, useLocation } from 'react-router-dom'
 import { useAtomValue } from 'jotai'
 import { ClipboardList, FolderKanban, GitCommitHorizontal, Pencil, Box } from 'lucide-react'
 
-const TaskUniverse3D = lazy(() => import('@/components/tasks/TaskUniverse3D'))
+import { useTaskUniverse } from '@/components/universe'
+const Universe3DPanel = lazy(() => import('@/components/universe/Universe3DPanel'))
 import { Card, CardHeader, CardTitle, CardContent, LoadingPage, ErrorState, Badge, Button, ConfirmDialog, FormDialog, LinkEntityDialog, TaskStatusBadge, InteractiveStepStatusBadge, InteractiveDecisionStatusBadge, ProgressBar, PageHeader, StatusSelect, SectionNav, ViewToggle } from '@/components/ui'
 import type { ParentLink } from '@/components/ui/PageHeader'
 import { tasksApi, plansApi, projectsApi, decisionsApi } from '@/services'
@@ -58,6 +59,7 @@ export function TaskDetailPage() {
   const [commits, setCommits] = useState<Commit[]>([])
   const [commitShaInput, setCommitShaInput] = useState('')
   const [show3D, setShow3D] = useState(false)
+  const taskUniverse = useTaskUniverse(show3D ? taskId : undefined)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -290,7 +292,7 @@ export function TaskDetailPage() {
       <PageHeader
         title={task.title || 'Task'}
         viewTransitionName={`task-title-${task.id}`}
-        description={task.description}
+        description={show3D ? undefined : task.description}
         parentLinks={parentLinks.length > 0 ? parentLinks : undefined}
         status={
           <StatusSelect
@@ -331,9 +333,9 @@ export function TaskDetailPage() {
                 ))}
               </div>
             )}
-            <Button size="sm" variant="secondary" onClick={() => setShow3D(true)}>
+            <Button size="sm" variant={show3D ? 'primary' : 'secondary'} onClick={() => setShow3D(!show3D)}>
               <Box className="w-3.5 h-3.5 mr-1.5" />
-              3D View
+              {show3D ? 'Description' : '3D View'}
             </Button>
           </div>
         }
@@ -354,6 +356,31 @@ export function TaskDetailPage() {
           }) }
         ]}
       />
+
+      {/* Inline 3D Universe View */}
+      {show3D && taskId && (
+        <Suspense fallback={
+          <div className="relative rounded-xl bg-[#0a0a0f] flex items-center justify-center" style={{ height: 500 }}>
+            <div className="text-gray-400 animate-pulse text-sm">Loading 3D engine...</div>
+          </div>
+        }>
+          <Universe3DPanel
+            nodes={taskUniverse.nodes}
+            links={taskUniverse.links}
+            isLoading={taskUniverse.isLoading}
+            error={taskUniverse.error}
+            onClose={() => setShow3D(false)}
+            centerType="task"
+            legend={[
+              { type: 'task', label: 'Task (center)' },
+              { type: 'step', label: 'Steps' },
+              { type: 'decision', label: 'Decisions' },
+              { type: 'file', label: 'Files' },
+              { type: 'commit', label: 'Commits' },
+            ]}
+          />
+        </Suspense>
+      )}
 
       <SectionNav sections={sections} activeSection={activeSection} />
 
@@ -626,17 +653,6 @@ export function TaskDetailPage() {
       </FormDialog>
       <LinkEntityDialog {...linkDialog.dialogProps} />
       <ConfirmDialog {...confirmDialog.dialogProps} />
-
-      {/* 3D Universe View */}
-      {show3D && taskId && (
-        <Suspense fallback={
-          <div className="fixed inset-0 z-50 bg-[#0a0a0f] flex items-center justify-center">
-            <div className="text-gray-400 animate-pulse text-lg">Loading 3D engine...</div>
-          </div>
-        }>
-          <TaskUniverse3D taskId={taskId} onClose={() => setShow3D(false)} />
-        </Suspense>
-      )}
     </div>
   )
 }
