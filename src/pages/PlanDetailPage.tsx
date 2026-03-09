@@ -458,7 +458,7 @@ export function PlanDetailPage() {
           </CardHeader>
           <CardContent>
             {graphViewMode === 'waves' && waves ? (
-              <WaveView data={waves} taskStatuses={taskStatusMap} />
+              <WaveView data={waves} taskStatuses={taskStatusMap} planId={plan.id} planStatus={plan.status} />
             ) : (
               <DependencyGraphView graph={graph} taskStatuses={taskStatusMap} />
             )}
