@@ -1098,6 +1098,7 @@ export interface DependencyGraphNode {
   discussed_files?: DiscussedFile[]
   /** Active agent info (from PR branch real-time tracking) */
   activeAgent?: ActiveAgentInfo | null
+  affectedFiles?: string[]
 }
 
 export interface DependencyGraphEdge {
