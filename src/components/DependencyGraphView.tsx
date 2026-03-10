@@ -12,12 +12,12 @@ import {
 } from '@xyflow/react'
 import dagre from 'dagre'
 import { Link } from 'react-router-dom'
-import { AlertTriangle, FileCode2, StickyNote, BookOpen, ExternalLink } from 'lucide-react'
+import { AlertTriangle, FileCode2, StickyNote, BookOpen, ExternalLink, CheckCircle2, Circle, Loader2, SkipForward } from 'lucide-react'
 import { PulseIndicator } from '@/components/ui'
 import { useWorkspaceSlug } from '@/hooks'
 import { workspacePath } from '@/utils/paths'
 import { tasksApi, getEventBus } from '@/services'
-import type { DependencyGraph, TaskStatus, StepStatus, CrudEvent } from '@/types'
+import type { DependencyGraph, DependencyGraphStep, TaskStatus, StepStatus, CrudEvent } from '@/types'
 import '@xyflow/react/dist/style.css'
 
 // ============================================================================
@@ -45,6 +45,8 @@ interface TaskNodeData extends Record<string, unknown> {
   affectedFiles?: string[]
   noteCount?: number
   decisionCount?: number
+  /** Individual step details from backend */
+  steps?: DependencyGraphStep[]
   /** Files that conflict with other tasks */
   conflictFiles?: string[]
   hasConflicts?: boolean
@@ -72,11 +74,45 @@ const statusLabels: Record<TaskStatus, string> = {
 }
 
 // ============================================================================
-// DAGRE LAYOUT (larger nodes to fit enriched content)
+// STEP STATUS HELPERS
 // ============================================================================
 
-const NODE_WIDTH = 280
-const NODE_HEIGHT = 140
+/** Normalize backend step status string (PascalCase) to our display format */
+function normalizeStepStatus(status: string): string {
+  const s = status.toLowerCase()
+  if (s === 'completed') return 'completed'
+  if (s === 'inprogress' || s === 'in_progress') return 'in_progress'
+  if (s === 'skipped') return 'skipped'
+  return 'pending'
+}
+
+function StepIcon({ status }: { status: string }) {
+  const normalized = normalizeStepStatus(status)
+  switch (normalized) {
+    case 'completed':
+      return <CheckCircle2 className="w-3 h-3 text-green-400 flex-shrink-0" />
+    case 'in_progress':
+      return <Loader2 className="w-3 h-3 text-indigo-400 flex-shrink-0 animate-spin" />
+    case 'skipped':
+      return <SkipForward className="w-3 h-3 text-yellow-400 flex-shrink-0" />
+    default:
+      return <Circle className="w-3 h-3 text-gray-600 flex-shrink-0" />
+  }
+}
+
+// ============================================================================
+// DAGRE LAYOUT (dynamic node height based on step count)
+// ============================================================================
+
+const NODE_WIDTH = 300
+const BASE_NODE_HEIGHT = 80  // without steps
+const STEP_ROW_HEIGHT = 18   // each step row
+const MAX_VISIBLE_STEPS = 6  // cap to prevent huge nodes
+
+function computeNodeHeight(stepCount: number): number {
+  const visibleSteps = Math.min(stepCount, MAX_VISIBLE_STEPS)
+  return BASE_NODE_HEIGHT + (visibleSteps > 0 ? 8 + visibleSteps * STEP_ROW_HEIGHT + (stepCount > MAX_VISIBLE_STEPS ? 14 : 0) : 0)
+}
 
 function getLayoutedElements(
   nodes: Node<TaskNodeData>[],
@@ -88,7 +124,8 @@ function getLayoutedElements(
   g.setGraph({ rankdir: direction, nodesep: 50, ranksep: 90, marginx: 20, marginy: 20 })
 
   nodes.forEach((node) => {
-    g.setNode(node.id, { width: NODE_WIDTH, height: NODE_HEIGHT })
+    const stepCount = node.data.steps?.length ?? node.data.stepCount ?? 0
+    g.setNode(node.id, { width: NODE_WIDTH, height: computeNodeHeight(stepCount) })
   })
 
   edges.forEach((edge) => {
@@ -103,7 +140,7 @@ function getLayoutedElements(
       ...node,
       position: {
         x: nodeWithPosition.x - NODE_WIDTH / 2,
-        y: nodeWithPosition.y - NODE_HEIGHT / 2,
+        y: nodeWithPosition.y - nodeWithPosition.height / 2,
       },
     }
   })
@@ -112,20 +149,19 @@ function getLayoutedElements(
 }
 
 // ============================================================================
-// ENRICHED TASK NODE (matches WaveTaskCard level of detail)
+// ENRICHED TASK NODE (with inline step list)
 // ============================================================================
 
 function TaskNodeComponent({ data }: NodeProps<Node<TaskNodeData>>) {
   const colors = statusColors[data.status] || statusColors.pending
   const isInProgress = data.status === 'in_progress'
 
-  const stepCount = data.stepCount ?? 0
-  const completedStepCount = data.completedStepCount ?? 0
   const noteCount = data.noteCount ?? 0
   const decisionCount = data.decisionCount ?? 0
   const files = data.affectedFiles ?? []
   const hasConflicts = data.hasConflicts ?? false
   const conflictFiles = data.conflictFiles ?? []
+  const steps = data.steps ?? []
 
   const handleClick = useCallback(
     (e: MouseEvent) => {
@@ -139,23 +175,22 @@ function TaskNodeComponent({ data }: NodeProps<Node<TaskNodeData>>) {
     <div className="relative">
       <div
         onClick={handleClick}
-        className={`cursor-pointer transition-all duration-150 hover:scale-[1.03] hover:shadow-lg ${isInProgress ? 'dep-node-pulse' : ''}`}
+        className={`cursor-pointer transition-all duration-150 hover:scale-[1.02] hover:shadow-lg ${isInProgress ? 'dep-node-pulse' : ''}`}
         style={{
           background: colors.bg,
           border: `1.5px solid ${colors.border}`,
           borderRadius: 10,
-          padding: '10px 12px',
-          minWidth: 240,
-          maxWidth: 300,
+          padding: '8px 10px',
+          width: NODE_WIDTH,
           boxShadow: hasConflicts ? '0 0 0 1px rgba(249,115,22,0.4)' : undefined,
         }}
       >
         <Handle type="target" position={Position.Top} style={{ background: colors.border, width: 8, height: 8 }} />
 
-        {/* Row 1: Status + Agent + Priority + Conflict */}
+        {/* Row 1: Status dot + label + agent indicator + priority + conflict */}
         <div className="flex items-center gap-1.5 mb-1">
           <div
-            className={isInProgress ? 'pulse-indicator relative inline-flex shrink-0' : ''}
+            className={isInProgress ? 'pulse-indicator relative inline-flex shrink-0' : 'inline-flex shrink-0'}
             style={{ width: 7, height: 7 }}
           >
             {isInProgress && (
@@ -165,7 +200,7 @@ function TaskNodeComponent({ data }: NodeProps<Node<TaskNodeData>>) {
               />
             )}
             <span
-              className="relative inline-flex rounded-full w-full h-full"
+              className="relative inline-flex rounded-full"
               style={{ background: colors.dot, width: 7, height: 7, borderRadius: '50%', flexShrink: 0 }}
             />
           </div>
@@ -173,54 +208,92 @@ function TaskNodeComponent({ data }: NodeProps<Node<TaskNodeData>>) {
             {statusLabels[data.status]}
           </span>
 
-          {isInProgress && (
+          {isInProgress && data.assignedTo && (
+            <span className="inline-flex items-center gap-0.5 ml-0.5">
+              <PulseIndicator variant="active" size={5} />
+              <span className="text-[9px] text-green-400 truncate max-w-[60px]">{data.assignedTo}</span>
+            </span>
+          )}
+
+          {isInProgress && !data.assignedTo && (
             <span className="inline-flex items-center gap-0.5 ml-0.5">
               <PulseIndicator variant="active" size={5} />
               <span className="text-[9px] text-green-400">Working...</span>
             </span>
           )}
 
-          {data.priority != null && data.priority > 0 && (
-            <span className="text-[9px] text-gray-500 ml-auto">P{data.priority}</span>
-          )}
+          <div className="flex items-center gap-1 ml-auto">
+            {/* Knowledge indicators inline with status row */}
+            {noteCount > 0 && (
+              <span className="inline-flex items-center gap-0.5 text-[9px] text-amber-400/70" title={`${noteCount} note${noteCount > 1 ? 's' : ''}`}>
+                <StickyNote className="w-2.5 h-2.5" />
+                {noteCount}
+              </span>
+            )}
+            {decisionCount > 0 && (
+              <span className="inline-flex items-center gap-0.5 text-[9px] text-purple-400/70" title={`${decisionCount} decision${decisionCount > 1 ? 's' : ''}`}>
+                <BookOpen className="w-2.5 h-2.5" />
+                {decisionCount}
+              </span>
+            )}
 
-          {hasConflicts && (
-            <span title={`Conflict on: ${conflictFiles.join(', ')}`}>
-              <AlertTriangle className="w-3 h-3 text-orange-400 flex-shrink-0" />
-            </span>
-          )}
+            {data.priority != null && data.priority > 0 && (
+              <span className="text-[9px] text-gray-500">P{data.priority}</span>
+            )}
+
+            {hasConflicts && (
+              <span title={`Conflict on: ${conflictFiles.join(', ')}`}>
+                <AlertTriangle className="w-3 h-3 text-orange-400 flex-shrink-0" />
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Row 2: Title */}
         <p
-          className="text-xs font-medium truncate mb-1.5"
+          className="text-[11px] font-medium truncate mb-1"
           style={{ color: '#e5e7eb' }}
           title={data.label}
         >
           {data.label}
         </p>
 
-        {/* Row 3: Step progress bar */}
-        {stepCount > 0 && (
-          <div className="flex items-center gap-1.5 mb-1.5">
-            <div className="flex-1 h-1 rounded-full bg-white/[0.08] overflow-hidden">
-              <div
-                className="h-full rounded-full transition-all duration-300"
-                style={{
-                  width: `${(completedStepCount / (stepCount || 1)) * 100}%`,
-                  background: colors.dot,
-                }}
-              />
-            </div>
-            <span className="text-[9px] text-gray-500 flex-shrink-0">
-              {completedStepCount}/{stepCount}
-            </span>
+        {/* Row 3: Step list (inline, compact) */}
+        {steps.length > 0 && (
+          <div className="mt-1 space-y-[2px]">
+            {steps.slice(0, MAX_VISIBLE_STEPS).map((step) => {
+              const normalized = normalizeStepStatus(step.status)
+              return (
+                <div
+                  key={step.id}
+                  className={`flex items-center gap-1.5 py-[1px] px-1 rounded text-[9px] ${
+                    normalized === 'in_progress' ? 'bg-indigo-500/10' :
+                    normalized === 'completed' ? 'bg-green-500/5' :
+                    'bg-transparent'
+                  }`}
+                >
+                  <StepIcon status={step.status} />
+                  <span className={`truncate flex-1 ${
+                    normalized === 'completed' ? 'text-gray-500 line-through' :
+                    normalized === 'in_progress' ? 'text-indigo-300' :
+                    'text-gray-400'
+                  }`}>
+                    {step.description}
+                  </span>
+                </div>
+              )
+            })}
+            {steps.length > MAX_VISIBLE_STEPS && (
+              <span className="text-[8px] text-gray-600 pl-1">
+                +{steps.length - MAX_VISIBLE_STEPS} more
+              </span>
+            )}
           </div>
         )}
 
-        {/* Row 4: Affected files (up to 3) */}
-        {files.length > 0 && (
-          <div className="flex flex-wrap gap-0.5 mb-1.5">
+        {/* Row 4: Affected files (compact, only if no steps or few steps) */}
+        {files.length > 0 && steps.length <= 3 && (
+          <div className="flex flex-wrap gap-0.5 mt-1">
             {files.slice(0, 3).map((file) => (
               <span
                 key={file}
@@ -239,24 +312,6 @@ function TaskNodeComponent({ data }: NodeProps<Node<TaskNodeData>>) {
             {files.length > 3 && (
               <span className="text-[8px] text-gray-600 px-0.5">
                 +{files.length - 3}
-              </span>
-            )}
-          </div>
-        )}
-
-        {/* Row 5: Knowledge indicators (notes + decisions) */}
-        {(noteCount > 0 || decisionCount > 0) && (
-          <div className="flex items-center gap-2">
-            {noteCount > 0 && (
-              <span className="inline-flex items-center gap-0.5 text-[9px] text-amber-400/70">
-                <StickyNote className="w-2.5 h-2.5" />
-                {noteCount} note{noteCount > 1 ? 's' : ''}
-              </span>
-            )}
-            {decisionCount > 0 && (
-              <span className="inline-flex items-center gap-0.5 text-[9px] text-purple-400/70">
-                <BookOpen className="w-2.5 h-2.5" />
-                {decisionCount} decision{decisionCount > 1 ? 's' : ''}
               </span>
             )}
           </div>
@@ -538,6 +593,8 @@ export function TaskDrawer({ taskId, onClose, onOpenFullPage }: TaskDrawerProps)
 export function DependencyGraphView({ graph, taskStatuses, onNodeSelect, className = '' }: DependencyGraphViewProps) {
   // Local status overrides from CrudEvents (real-time)
   const [liveStatuses, setLiveStatuses] = useState<Map<string, TaskStatus>>(new Map())
+  // Live step updates from CrudEvents (real-time step status changes)
+  const [liveStepUpdates, setLiveStepUpdates] = useState<Map<string, { stepId: string; status: string }>>(new Map())
   // Local step progress from CrudEvents
   const [liveStepProgress, setLiveStepProgress] = useState<Map<string, { stepCount: number; completedStepCount: number }>>(new Map())
 
@@ -557,6 +614,18 @@ export function DependencyGraphView({ graph, taskStatuses, onNodeSelect, classNa
       }
       if (event.entity_type === 'step' && (event.action === 'updated' || event.action === 'progress')) {
         const taskId = event.payload?.task_id as string | undefined
+        const newStatus = event.payload?.status as string | undefined
+
+        // Update individual step status
+        if (newStatus && taskId) {
+          setLiveStepUpdates((prev) => {
+            const next = new Map(prev)
+            next.set(event.entity_id, { stepId: event.entity_id, status: newStatus })
+            return next
+          })
+        }
+
+        // Update progress counters
         const total = event.payload?.total as number | undefined
         const completed = event.payload?.completed as number | undefined
         if (taskId && total != null && completed != null) {
@@ -595,6 +664,16 @@ export function DependencyGraphView({ graph, taskStatuses, onNodeSelect, classNa
       const nodeConflictFiles = conflictLookup.get(node.id)
       const conflictFilesArr = nodeConflictFiles ? Array.from(nodeConflictFiles) : []
 
+      // Merge live step status updates into the steps array
+      const baseSteps = node.steps ?? []
+      const mergedSteps = baseSteps.map((step) => {
+        const liveUpdate = liveStepUpdates.get(step.id)
+        if (liveUpdate) {
+          return { ...step, status: liveUpdate.status }
+        }
+        return step
+      })
+
       return {
         id: node.id,
         type: 'taskNode',
@@ -611,6 +690,7 @@ export function DependencyGraphView({ graph, taskStatuses, onNodeSelect, classNa
           affectedFiles: node.affected_files,
           noteCount: node.note_count ?? 0,
           decisionCount: node.decision_count ?? 0,
+          steps: mergedSteps,
           hasConflicts: conflictFilesArr.length > 0,
           conflictFiles: conflictFilesArr,
           onSelect: onNodeSelect,
@@ -640,11 +720,18 @@ export function DependencyGraphView({ graph, taskStatuses, onNodeSelect, classNa
 
     const { nodes: ln, edges: le } = getLayoutedElements(rfNodes, rfEdges, 'TB')
 
-    const maxY = ln.reduce((max, n) => Math.max(max, n.position.y), 0)
-    const calculatedHeight = Math.max(400, Math.min(900, maxY + 200))
+    // Calculate graph height from max node bottom position
+    let maxBottom = 0
+    for (const n of ln) {
+      const stepCount = n.data.steps?.length ?? n.data.stepCount ?? 0
+      const nodeH = computeNodeHeight(stepCount)
+      const bottom = n.position.y + nodeH
+      if (bottom > maxBottom) maxBottom = bottom
+    }
+    const calculatedHeight = Math.max(400, Math.min(1200, maxBottom + 80))
 
     return { layoutedNodes: ln, layoutedEdges: le, graphHeight: calculatedHeight }
-  }, [graph, taskStatuses, liveStatuses, liveStepProgress, conflictLookup, onNodeSelect])
+  }, [graph, taskStatuses, liveStatuses, liveStepUpdates, liveStepProgress, conflictLookup, onNodeSelect])
 
   if (layoutedNodes.length === 0) {
     return <p className="text-gray-500 text-sm">No tasks to display</p>

@@ -1033,6 +1033,15 @@ export interface PaginatedResponse<T> {
   has_more?: boolean
 }
 
+/** Individual step in a dependency graph node */
+export interface DependencyGraphStep {
+  id: string
+  order: number
+  description: string
+  status: string  // "Pending" | "InProgress" | "Completed" | "Skipped"
+  verification?: string
+}
+
 export interface DependencyGraphNode {
   id: string
   title?: string
@@ -1050,6 +1059,8 @@ export interface DependencyGraphNode {
   note_count?: number
   /** Number of decisions linked to this task */
   decision_count?: number
+  /** Individual step details */
+  steps?: DependencyGraphStep[]
   /** Step count (legacy alias for backward compat) */
   stepCount?: number
   /** Completed step count (legacy alias) */
