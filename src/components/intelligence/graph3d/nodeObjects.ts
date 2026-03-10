@@ -27,35 +27,96 @@ import type { Graph3DNode } from './useGraph3DLayout'
 // SpriteText extends Sprite extends Object3D — has .position
 type SpriteTextInstance = SpriteText & THREE.Object3D
 
-// ── Entity emojis ──────────────────────────────────────────────────────────────
+// ── Entity emojis — status-aware ─────────────────────────────────────────────
+// Entities with lifecycle statuses get different emojis per state.
+// The default (no status or unknown status) falls back to the base emoji.
 
 const ENTITY_EMOJIS: Record<string, string> = {
   // Code layer
-  file: '\u{1F4C4}',
-  function: '\u26A1',
-  struct: '\u{1F3D7}\uFE0F',
-  trait: '\u{1F9EC}',
-  enum: '\u{1F4CB}',
+  file: '📄',
+  function: '⚡',
+  struct: '🏗️',
+  trait: '🧬',
+  enum: '📋',
   // PM layer
-  plan: '\u{1F3AF}',
-  task: '\u2705',
-  step: '\u{1F463}',
-  milestone: '\u{1F3C1}',
-  release: '\u{1F680}',
-  commit: '\u{1F4BE}',
+  plan: '🎯',
+  task: '📌',
+  step: '👣',
+  milestone: '🏁',
+  release: '🚀',
+  commit: '💾',
   // Knowledge layer
-  note: '\u{1F4DD}',
-  decision: '\u2696\uFE0F',
-  constraint: '\u{1F6E1}\uFE0F',
+  note: '📝',
+  decision: '⚖️',
+  constraint: '🛡️',
   // Skills layer
-  skill: '\u{1F9E0}',
+  skill: '🧠',
   // Behavioral layer
-  protocol: '\u{1F504}',
-  protocol_state: '\u2B55',
+  protocol: '🔄',
+  protocol_state: '⭕',
   // Chat layer
-  chat_session: '\u{1F4AC}',
+  chat_session: '💬',
   // Feature graph
-  feature_graph: '\u{1F52E}',
+  feature_graph: '🔮',
+}
+
+/** Status-specific emoji overrides — (entityType, status) → emoji */
+const STATUS_EMOJIS: Record<string, Record<string, string>> = {
+  task: {
+    pending:     '⏳',
+    in_progress: '🔨',
+    blocked:     '🚧',
+    completed:   '✅',
+    failed:      '❌',
+  },
+  step: {
+    pending:     '⬜',
+    in_progress: '▶️',
+    completed:   '✅',
+    skipped:     '⏭️',
+  },
+  plan: {
+    draft:       '📝',
+    approved:    '🎯',
+    in_progress: '🔥',
+    completed:   '🏆',
+    cancelled:   '🚫',
+  },
+  milestone: {
+    planned:     '📍',
+    open:        '🏁',
+    in_progress: '🏃',
+    completed:   '🎉',
+    closed:      '🔒',
+  },
+  release: {
+    planned:     '📦',
+    in_progress: '🔧',
+    released:    '🚀',
+    cancelled:   '🚫',
+  },
+  decision: {
+    proposed:    '💭',
+    accepted:    '⚖️',
+    deprecated:  '📉',
+    superseded:  '🔀',
+  },
+  note: {
+    active:       '📝',
+    needs_review: '🔍',
+    stale:        '📜',
+    obsolete:     '🗑️',
+    archived:     '📦',
+  },
+}
+
+/** Get the emoji for a node, considering its status */
+function getStatusEmoji(entityType: string, status?: string): string {
+  if (status) {
+    const statusMap = STATUS_EMOJIS[entityType]
+    if (statusMap?.[status]) return statusMap[status]
+  }
+  return ENTITY_EMOJIS[entityType] ?? '❓'
 }
 
 // ── Helper: draw text along a circular arc ──────────────────────────────────
@@ -271,8 +332,8 @@ function createGlowSprite(color: string, energy: number): THREE.Sprite {
 
 // ── Central emoji sprite ─────────────────────────────────────────────────────
 
-function createEmojiSprite(entityType: string, energy: number): SpriteText {
-  const emoji = ENTITY_EMOJIS[entityType] ?? '\u2753'
+function createEmojiSprite(entityType: string, energy: number, status?: string): SpriteText {
+  const emoji = getStatusEmoji(entityType, status)
   const sprite = new SpriteText(emoji) as SpriteTextInstance
   // Emoji is THE node — prominent size, scaled by energy
   sprite.textHeight = 8 + energy * 4  // 8 at rest → 12 at max energy
@@ -319,6 +380,105 @@ function getNodeSubtitle(node: Graph3DNode): string | undefined {
   const data = node.data
   const entityType = node.entityType
 
+  // ── Milestone: show plan + task descendance ──
+  if (entityType === 'milestone') {
+    const parts: string[] = []
+    const pc = data.plan_count as number | undefined
+    const tc = data.task_count as number | undefined
+    if (pc) parts.push(`${pc} plans`)
+    if (tc) parts.push(`${tc} tasks`)
+    return parts.length > 0 ? parts.join(' · ') : undefined
+  }
+
+  // ── Plan: show task descendance with completion ──
+  if (entityType === 'plan') {
+    const parts: string[] = []
+    const tc = data.task_count as number | undefined
+    const ctc = data.completed_task_count as number | undefined
+    if (tc) parts.push(`${ctc ?? 0}/${tc} tasks`)
+    const fc = data.file_count as number | undefined
+    if (fc) parts.push(`${fc} files`)
+    return parts.length > 0 ? parts.join(' · ') : undefined
+  }
+
+  // ── Task: show step progress + linked entities ──
+  if (entityType === 'task') {
+    const parts: string[] = []
+    const sc = data.step_count as number | undefined
+    const csc = data.completed_step_count as number | undefined
+    if (sc) parts.push(`${csc ?? 0}/${sc} steps`)
+    // Descendance counts — compact format
+    const counts: string[] = []
+    const nc = data.note_count as number | undefined
+    const dc = data.decision_count as number | undefined
+    const fc = data.affected_file_count as number | undefined
+    const cc = data.commit_count as number | undefined
+    if (fc) counts.push(`${fc}📄`)
+    if (cc) counts.push(`${cc}💾`)
+    if (nc) counts.push(`${nc}📝`)
+    if (dc) counts.push(`${dc}⚖️`)
+    if (counts.length > 0) parts.push(counts.join(' '))
+    return parts.length > 0 ? parts.join(' · ') : undefined
+  }
+
+  // ── Step: show verification hint ──
+  if (entityType === 'step') {
+    const v = data.verification as string | undefined
+    if (v) {
+      const short = v.length > 30 ? v.slice(0, 29) + '…' : v
+      return short
+    }
+    return undefined
+  }
+
+  // ── File: parent directory + symbol counts ──
+  if (entityType === 'file') {
+    const parts: string[] = []
+    const path = data.path as string | undefined
+    if (path) {
+      const segs = path.split('/')
+      if (segs.length > 2) {
+        parts.push(segs.slice(-3, -1).join('/'))
+      }
+    }
+    const fnc = data.function_count as number | undefined
+    const sc = data.struct_count as number | undefined
+    if (fnc) parts.push(`${fnc}⚡`)
+    if (sc) parts.push(`${sc}🏗️`)
+    return parts.length > 0 ? parts.join(' · ') : undefined
+  }
+
+  // ── Decision: chosen option as subtitle ──
+  if (entityType === 'decision') {
+    const co = data.chosen_option as string | undefined
+    if (co) {
+      const short = co.length > 28 ? co.slice(0, 27) + '…' : co
+      return short
+    }
+    return undefined
+  }
+
+  // ── Note: importance + type ──
+  if (entityType === 'note') {
+    const parts: string[] = []
+    const nt = data.note_type as string | undefined
+    const imp = data.importance as string | undefined
+    if (nt) parts.push(nt)
+    if (imp) parts.push(imp)
+    return parts.length > 0 ? parts.join(' · ') : undefined
+  }
+
+  // ── Commit: short sha + file count ──
+  if (entityType === 'commit') {
+    const parts: string[] = []
+    const sha = data.sha as string | undefined
+    if (sha) parts.push(sha.slice(0, 7))
+    const fc = data.file_count as number | undefined
+    if (fc) parts.push(`${fc} files`)
+    return parts.length > 0 ? parts.join(' · ') : undefined
+  }
+
+  // ── Chat session: model + msg count ──
   if (entityType === 'chat_session') {
     const parts: string[] = []
     if (data.model) parts.push(String(data.model))
@@ -329,30 +489,33 @@ function getNodeSubtitle(node: Graph3DNode): string | undefined {
     return parts.length > 0 ? parts.join(' · ') : undefined
   }
 
+  // ── Feature graph: entity count ──
   if (entityType === 'feature_graph') {
     const count = data.entity_count
     if (count) return `${count} entities`
     return undefined
   }
 
-  if (entityType === 'task') {
+  // ── Constraint: severity ──
+  if (entityType === 'constraint') {
+    const sev = data.severity as string | undefined
+    return sev ?? undefined
+  }
+
+  // ── Skill: energy + cohesion ──
+  if (entityType === 'skill') {
     const parts: string[] = []
-    if (data.status) parts.push(String(data.status))
-    const sc = data.step_count as number | undefined
-    const csc = data.completed_step_count as number | undefined
-    if (sc) parts.push(`${csc ?? 0}/${sc} steps`)
+    const e = data.energy as number | undefined
+    const c = data.cohesion as number | undefined
+    if (e !== undefined) parts.push(`⚡${(e * 100).toFixed(0)}%`)
+    if (c !== undefined) parts.push(`🔗${(c * 100).toFixed(0)}%`)
     return parts.length > 0 ? parts.join(' · ') : undefined
   }
 
-  if (entityType === 'file') {
-    // Show parent directory for context
-    const path = data.path as string | undefined
-    if (path) {
-      const parts = path.split('/')
-      if (parts.length > 2) {
-        return parts.slice(-3, -1).join('/')
-      }
-    }
+  // ── Protocol: state count ──
+  if (entityType === 'protocol') {
+    const sc = data.state_count as number | undefined
+    if (sc) return `${sc} states`
     return undefined
   }
 
@@ -367,6 +530,7 @@ export function createNodeObject(node: Graph3DNode): THREE.Object3D {
   const entityType = node.entityType
   const color = ENTITY_COLORS[entityType as keyof typeof ENTITY_COLORS] ?? '#6B7280'
   const energy = (node.data.energy as number) ?? 0
+  const status = node.data.status as string | undefined
   const subtitle = getNodeSubtitle(node)
 
   // 0. Invisible hitbox — ensures the node is easy to click/hover
@@ -383,8 +547,8 @@ export function createNodeObject(node: Graph3DNode): THREE.Object3D {
   const ringLabel = createRingLabelSprite(node.label, color, energy, subtitle)
   group.add(ringLabel)
 
-  // 3. Central emoji — THE primary visual element (on top)
-  const emojiSprite = createEmojiSprite(entityType, energy)
+  // 3. Central emoji — THE primary visual element (on top), status-aware
+  const emojiSprite = createEmojiSprite(entityType, energy, status)
   group.add(emojiSprite)
 
   return group

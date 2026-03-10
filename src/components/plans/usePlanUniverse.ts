@@ -66,7 +66,12 @@ function buildBaseGraph(
     id: planId,
     label: planTitle,
     type: 'plan',
-    data: { energy: 1.0 },
+    data: {
+      energy: 1.0,
+      task_count: (graph.nodes || []).length,
+      completed_task_count: (graph.nodes || []).filter((t) => t.status === 'completed').length,
+      file_count: new Set((graph.nodes || []).flatMap((t) => t.affected_files || [])).size,
+    },
     color: ENTITY_COLORS.plan,
   })
 
@@ -82,6 +87,10 @@ function buildBaseGraph(
         priority: task.priority,
         step_count: task.step_count,
         completed_step_count: task.completed_step_count,
+        note_count: task.note_count,
+        decision_count: task.decision_count,
+        affected_file_count: (task.affected_files || []).length,
+        session_count: task.session_count,
         energy: task.status === 'in_progress' ? 0.8 : task.status === 'completed' ? 0.3 : 0.5,
       },
       color: taskColor,

@@ -419,73 +419,56 @@ export function PlanDetailPage() {
             <div className="flex items-center justify-between w-full">
               <div className="flex items-center gap-3">
                 <CardTitle>{graphViewMode === 'waves' ? 'Execution Waves' : graphViewMode === '3d' ? '3D Universe' : 'Dependency Graph'}</CardTitle>
-                {/* Toggle DAG / Waves */}
-                <div className="flex items-center rounded-lg bg-gray-800/60 border border-gray-700/50 p-0.5">
-                  <button
-                    onClick={() => setGraphViewMode('dag')}
-                    className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
-                      graphViewMode === 'dag'
-                        ? 'bg-indigo-600 text-white font-medium shadow-sm'
-                        : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'
-                    }`}
-                  >
-                    DAG
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (!waves) {
-                        fetchWaves()
-                      } else {
-                        setGraphViewMode('waves')
-                      }
-                    }}
-                    disabled={wavesLoading}
-                    className={`px-2.5 py-1 text-xs rounded-md transition-colors flex items-center gap-1.5 ${
-                      graphViewMode === 'waves'
-                        ? 'bg-indigo-600 text-white font-medium shadow-sm'
-                        : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'
-                    } ${wavesLoading ? 'opacity-50' : ''}`}
-                  >
-                    <Layers className="w-3 h-3" />
-                    {wavesLoading ? 'Computing...' : 'Waves'}
-                  </button>
-                  <button
-                    onClick={() => setGraphViewMode('3d')}
-                    className={`px-2.5 py-1 text-xs rounded-md transition-colors flex items-center gap-1.5 ${
-                      graphViewMode === '3d'
-                        ? 'bg-indigo-600 text-white font-medium shadow-sm'
-                        : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'
-                    }`}
-                  >
-                    <Box className="w-3 h-3" />
-                    3D
-                  </button>
-                </div>
-              </div>
-              <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-sm text-gray-500">
                   {graphViewMode === 'waves' && waves
                     ? `${waves.summary.total_waves} waves · ${waves.summary.total_tasks} tasks`
                     : graphViewMode === '3d'
-                    ? `${(graph.nodes || []).length} nodes · 3D`
-                    : `${(graph.nodes || []).length} tasks · ${(graph.edges || []).length} dependencies`
+                    ? `${(graph.nodes || []).length} nodes`
+                    : `${(graph.nodes || []).length} tasks · ${(graph.edges || []).length} deps`
                   }
                 </span>
-                {graphViewMode !== '3d' && graph.feature_graphs && graph.feature_graphs.length > 0 && (
-                  <>
-                    <span className="text-gray-600">·</span>
-                    {graph.feature_graphs.map((fg) => (
-                      <Link
-                        key={fg.id}
-                        to={workspacePath(wsSlug, `/feature-graphs/${fg.id}`)}
-                        className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded bg-fuchsia-500/10 text-fuchsia-400 hover:bg-fuchsia-500/20 transition-colors"
-                      >
-                        <Layers className="w-3 h-3" />
-                        {fg.name}
-                      </Link>
-                    ))}
-                  </>
-                )}
+              </div>
+              {/* Toggle DAG / Waves / 3D */}
+              <div className="flex items-center rounded-lg bg-gray-800/60 border border-gray-700/50 p-0.5">
+                <button
+                  onClick={() => setGraphViewMode('dag')}
+                  className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
+                    graphViewMode === 'dag'
+                      ? 'bg-indigo-600 text-white font-medium shadow-sm'
+                      : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'
+                  }`}
+                >
+                  DAG
+                </button>
+                <button
+                  onClick={() => {
+                    if (!waves) {
+                      fetchWaves()
+                    } else {
+                      setGraphViewMode('waves')
+                    }
+                  }}
+                  disabled={wavesLoading}
+                  className={`px-2.5 py-1 text-xs rounded-md transition-colors flex items-center gap-1.5 ${
+                    graphViewMode === 'waves'
+                      ? 'bg-indigo-600 text-white font-medium shadow-sm'
+                      : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'
+                  } ${wavesLoading ? 'opacity-50' : ''}`}
+                >
+                  <Layers className="w-3 h-3" />
+                  {wavesLoading ? 'Computing...' : 'Waves'}
+                </button>
+                <button
+                  onClick={() => setGraphViewMode('3d')}
+                  className={`px-2.5 py-1 text-xs rounded-md transition-colors flex items-center gap-1.5 ${
+                    graphViewMode === '3d'
+                      ? 'bg-indigo-600 text-white font-medium shadow-sm'
+                      : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'
+                  }`}
+                >
+                  <Box className="w-3 h-3" />
+                  3D
+                </button>
               </div>
             </div>
           </CardHeader>

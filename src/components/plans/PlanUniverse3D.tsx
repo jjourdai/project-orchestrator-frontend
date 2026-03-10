@@ -70,7 +70,7 @@ function toIntelligenceNodes(
       layer: LAYER_MAP[n.type] ?? 'pm',
       entityId: n.id,
       energy: (n.data.energy as number) ?? statusToEnergy(n.data.status as string | undefined),
-      // Pass through all data for the NodeInspector
+      // Pass through all data for the NodeInspector + subtitle descendance
       status: n.data.status,
       step_count: n.data.step_count,
       completed_step_count: n.data.completed_step_count,
@@ -80,6 +80,23 @@ function toIntelligenceNodes(
       message: n.data.message,
       chosen_option: n.data.chosen_option,
       severity: n.data.severity,
+      // Descendance counts for subtitle
+      note_count: n.data.note_count,
+      decision_count: n.data.decision_count,
+      affected_file_count: n.data.affected_file_count,
+      commit_count: n.data.commit_count,
+      task_count: n.data.task_count,
+      completed_task_count: n.data.completed_task_count,
+      plan_count: n.data.plan_count,
+      file_count: n.data.file_count,
+      function_count: n.data.function_count,
+      struct_count: n.data.struct_count,
+      verification: n.data.verification,
+      note_type: n.data.note_type,
+      importance: n.data.importance,
+      state_count: n.data.state_count,
+      energy_value: n.data.energy_value,
+      cohesion: n.data.cohesion,
       // Chat session data
       model: n.data.model,
       messageCount: n.data.messageCount,
