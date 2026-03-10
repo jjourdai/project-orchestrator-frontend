@@ -45,6 +45,14 @@ function getDagreWorker(): Worker {
   return sharedWorker
 }
 
+/** Terminate the shared worker to free resources (called on unmount) */
+function terminateDagreWorker(): void {
+  if (sharedWorker) {
+    sharedWorker.terminate()
+    sharedWorker = null
+  }
+}
+
 /**
  * Serialize ReactFlow nodes into the minimal {id, width, height} the worker expects.
  * Also pre-computes the size lookup so the worker doesn't need NODE_SIZES.
@@ -294,6 +302,16 @@ export function useIntelligenceGraph(projectSlug: string | undefined) {
       fetchGraphForLayers(layers, nodeLimit, 'fetch_data')
     }
     fetchSummary()
+
+    // Cleanup on unmount or slug change: free atom memory + terminate worker
+    return () => {
+      setNodes([])
+      setEdges([])
+      setSummary(null)
+      setCommunities([])
+      setStages([])
+      terminateDagreWorker()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only on slug change
   }, [projectSlug])
 

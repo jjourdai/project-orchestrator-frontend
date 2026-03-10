@@ -106,7 +106,14 @@ export default function IntelligenceGraph3D({ nodes, edges }: IntelligenceGraph3
 
   // ── Cleanup cached Three.js resources on unmount ────────────────────────
   useEffect(() => {
-    return () => disposeNodeCaches()
+    return () => {
+      disposeNodeCaches()
+      // Dispose community hulls if any
+      if (communityHullsRef.current) {
+        disposeCommunityHulls(communityHullsRef.current)
+        communityHullsRef.current = null
+      }
+    }
   }, [])
 
   // ── Container sizing ────────────────────────────────────────────────────
