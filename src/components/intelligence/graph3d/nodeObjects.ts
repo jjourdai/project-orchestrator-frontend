@@ -245,6 +245,64 @@ function drawTextOnArc(
   ctx.globalAlpha = 1.0
 }
 
+// ── Minimal dot sprite (shared per color — O(~15) textures) ─────────────────
+// For minimal quality: a simple colored circle, no label, no ring.
+// Shared across all nodes of the same entity type (same color → same texture).
+
+const dotTextureCache = new Map<string, THREE.CanvasTexture>()
+const dotMaterialCache = new Map<string, THREE.SpriteMaterial>()
+
+function createDotSprite(color: string, energy: number): THREE.Sprite {
+  let texture = dotTextureCache.get(color)
+  if (!texture) {
+    const size = 64
+    const canvas = document.createElement('canvas')
+    canvas.width = size
+    canvas.height = size
+    const ctx = canvas.getContext('2d')!
+
+    // Filled circle with subtle border
+    const cx = size / 2
+    const cy = size / 2
+    const r = size * 0.4
+
+    // Filled dot
+    ctx.beginPath()
+    ctx.arc(cx, cy, r, 0, Math.PI * 2)
+    ctx.fillStyle = color
+    ctx.globalAlpha = 0.7
+    ctx.fill()
+
+    // Thin bright border
+    ctx.globalAlpha = 0.9
+    ctx.lineWidth = 2
+    ctx.strokeStyle = color
+    ctx.stroke()
+
+    texture = new THREE.CanvasTexture(canvas)
+    dotTextureCache.set(color, texture)
+  }
+
+  const opacityBucket = energy > 0.7 ? 'bright' : energy > 0.3 ? 'mid' : 'dim'
+  const matKey = `dot:${color}:${opacityBucket}`
+  let material = dotMaterialCache.get(matKey)
+  if (!material) {
+    const opacity = opacityBucket === 'bright' ? 0.9 : opacityBucket === 'mid' ? 0.65 : 0.4
+    material = new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      opacity,
+      depthWrite: false,
+    })
+    dotMaterialCache.set(matKey, material)
+  }
+
+  const sprite = new THREE.Sprite(material)
+  const spriteSize = (14 + energy * 4) * _currentConfig.ringScale
+  sprite.scale.set(spriteSize, spriteSize, 1)
+  return sprite
+}
+
 // ── Ring + circular label (single canvas billboard sprite) ────────────────────
 // Combines the colored ring border AND the name in an arc into one texture.
 // Supports an optional subtitle drawn on a second arc (top half).
@@ -696,12 +754,27 @@ export function createNodeObject(node: Graph3DNode): THREE.Object3D {
   const color = ENTITY_COLORS[entityType as keyof typeof ENTITY_COLORS] ?? '#6B7280'
   const energy = (node.data.energy as number) ?? 0
   const status = node.data.status as string | undefined
-  const subtitle = q.showSubtitle ? getNodeSubtitle(node) : undefined
-  const progress = q.showProgress ? getNodeProgress(node) : undefined
 
   // 0. Invisible hitbox — ensures the node is easy to click/hover
   const hitbox = createHitboxSprite()
   group.add(hitbox)
+
+  // ── MINIMAL mode: dot + emoji only (shared textures, O(~15) GPU textures) ──
+  if (_currentQuality === 'minimal') {
+    const dot = createDotSprite(color, energy)
+    group.add(dot)
+
+    // Still show emoji — SpriteText uses a shared internal canvas, not 1 texture per node
+    const emojiSprite = createEmojiSprite(entityType, energy, status)
+    emojiSprite.textHeight = (emojiSprite as SpriteTextInstance).textHeight * q.emojiScale
+    group.add(emojiSprite)
+
+    return group
+  }
+
+  // ── Normal mode: full ring + label + optional features ──
+  const subtitle = q.showSubtitle ? getNodeSubtitle(node) : undefined
+  const progress = q.showProgress ? getNodeProgress(node) : undefined
 
   // 1. Glow halo (behind everything) — only for high quality + energy > 0.4
   if (q.showGlow && energy > 0.4) {
@@ -731,6 +804,10 @@ export function disposeNodeCaches(): void {
   ringLabelTextureCache.clear()
   ringLabelMaterialCache.forEach((mat) => mat.dispose())
   ringLabelMaterialCache.clear()
+  dotTextureCache.forEach((tex) => tex.dispose())
+  dotTextureCache.clear()
+  dotMaterialCache.forEach((mat) => mat.dispose())
+  dotMaterialCache.clear()
   glowTextureCache.forEach((tex) => tex.dispose())
   glowTextureCache.clear()
   glowMaterialCache.forEach((mat) => mat.dispose())
