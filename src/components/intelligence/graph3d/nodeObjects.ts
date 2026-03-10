@@ -197,11 +197,19 @@ function drawTextOnArc(
 const ringLabelTextureCache = new Map<string, THREE.CanvasTexture>()
 const ringLabelMaterialCache = new Map<string, THREE.SpriteMaterial>()
 
+/** Progress info for entities with steps/children */
+interface NodeProgress {
+  completed: number
+  total: number
+}
+
 function createRingLabelSprite(
   text: string,
   color: string,
   energy: number,
   subtitle?: string,
+  progress?: NodeProgress,
+  status?: string,
 ): THREE.Sprite {
   const maxLen = 32
   const maxSubLen = 28
@@ -210,7 +218,10 @@ function createRingLabelSprite(
     ? (subtitle.length > maxSubLen ? subtitle.slice(0, maxSubLen - 1) + '\u2026' : subtitle)
     : undefined
   const opacityBucket = energy > 0.7 ? 'bright' : energy > 0.3 ? 'mid' : 'dim'
-  const cacheKey = `${displayText}:${displaySub ?? ''}:${color}:${opacityBucket}`
+  const progressRatio = progress && progress.total > 0 ? progress.completed / progress.total : -1
+  const progressBucket = progressRatio >= 0 ? Math.round(progressRatio * 20) / 20 : -1 // 5% steps
+  const isWorking = status === 'in_progress'
+  const cacheKey = `${displayText}:${displaySub ?? ''}:${color}:${opacityBucket}:${progressBucket}:${isWorking ? 'w' : ''}`
 
   let texture = ringLabelTextureCache.get(cacheKey)
   if (!texture) {
@@ -227,13 +238,81 @@ function createRingLabelSprite(
     const ringAlpha = opacityBucket === 'bright' ? 0.9 : opacityBucket === 'mid' ? 0.65 : 0.4
 
     // ── Draw ring border ──
-    ctx.beginPath()
-    ctx.arc(cx, cy, ringRadius, 0, Math.PI * 2)
-    ctx.strokeStyle = color
-    ctx.globalAlpha = ringAlpha
-    ctx.lineWidth = ringWidth
-    ctx.stroke()
-    ctx.globalAlpha = 1.0
+    if (progressRatio >= 0) {
+      // Progress mode: background track (dim) + progress fill arc
+      const progressArcWidth = ringWidth + 4
+      const startAngle = -Math.PI / 2 // 12 o'clock
+
+      // Background track — full circle, dim
+      ctx.beginPath()
+      ctx.arc(cx, cy, ringRadius, 0, Math.PI * 2)
+      ctx.strokeStyle = color
+      ctx.globalAlpha = 0.15
+      ctx.lineWidth = progressArcWidth
+      ctx.stroke()
+      ctx.globalAlpha = 1.0
+
+      // Progress fill — partial arc, bright
+      if (progressRatio > 0) {
+        const endAngle = startAngle + (Math.PI * 2 * progressRatio)
+        const progressColor = progressRatio >= 1.0
+          ? '#22c55e' // green-500 — fully complete
+          : isWorking
+            ? '#818cf8' // indigo-400 — in progress
+            : color      // default entity color
+        ctx.beginPath()
+        ctx.arc(cx, cy, ringRadius, startAngle, endAngle)
+        ctx.strokeStyle = progressColor
+        ctx.globalAlpha = 0.9
+        ctx.lineWidth = progressArcWidth
+        ctx.lineCap = 'round'
+        ctx.stroke()
+        ctx.lineCap = 'butt'
+        ctx.globalAlpha = 1.0
+      }
+    } else {
+      // Standard ring — no progress
+      ctx.beginPath()
+      ctx.arc(cx, cy, ringRadius, 0, Math.PI * 2)
+      ctx.strokeStyle = color
+      ctx.globalAlpha = ringAlpha
+      ctx.lineWidth = ringWidth
+      ctx.stroke()
+      ctx.globalAlpha = 1.0
+    }
+
+    // ── Working indicator badge (top-right of ring) ──
+    if (isWorking) {
+      const badgeAngle = -Math.PI / 4 // 1:30 position
+      const bx = cx + ringRadius * Math.cos(badgeAngle)
+      const by = cy + ringRadius * Math.sin(badgeAngle)
+      const badgeR = 14
+
+      // Pulsing dot background
+      ctx.beginPath()
+      ctx.arc(bx, by, badgeR + 4, 0, Math.PI * 2)
+      ctx.fillStyle = '#818cf8'
+      ctx.globalAlpha = 0.25
+      ctx.fill()
+      ctx.globalAlpha = 1.0
+
+      // Solid dot
+      ctx.beginPath()
+      ctx.arc(bx, by, badgeR, 0, Math.PI * 2)
+      ctx.fillStyle = '#818cf8'
+      ctx.globalAlpha = 0.9
+      ctx.fill()
+      ctx.globalAlpha = 1.0
+
+      // Gear icon ⚙ inside the badge
+      ctx.font = `${badgeR * 1.4}px Inter, system-ui, sans-serif`
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillStyle = '#ffffff'
+      ctx.globalAlpha = 0.95
+      ctx.fillText('⚙', bx, by + 1)
+      ctx.globalAlpha = 1.0
+    }
 
     // ── Subtle filled disc behind the ring for depth ──
     ctx.beginPath()
@@ -524,6 +603,32 @@ function getNodeSubtitle(node: Graph3DNode): string | undefined {
 
 // ── Main factory ──────────────────────────────────────────────────────────────
 
+/** Extract progress info from node data for entities with steps/children */
+function getNodeProgress(node: Graph3DNode): NodeProgress | undefined {
+  const data = node.data
+  const entityType = node.entityType
+
+  if (entityType === 'task') {
+    const total = (data.step_count as number) ?? 0
+    const completed = (data.completed_step_count as number) ?? 0
+    if (total > 0) return { completed, total }
+  }
+
+  if (entityType === 'plan') {
+    const total = (data.task_count as number) ?? 0
+    const completed = (data.completed_task_count as number) ?? 0
+    if (total > 0) return { completed, total }
+  }
+
+  if (entityType === 'milestone') {
+    const total = (data.task_count as number) ?? 0
+    const completed = (data.completed_task_count as number) ?? 0
+    if (total > 0) return { completed, total }
+  }
+
+  return undefined
+}
+
 export function createNodeObject(node: Graph3DNode): THREE.Object3D {
   const group = new THREE.Group()
 
@@ -532,6 +637,7 @@ export function createNodeObject(node: Graph3DNode): THREE.Object3D {
   const energy = (node.data.energy as number) ?? 0
   const status = node.data.status as string | undefined
   const subtitle = getNodeSubtitle(node)
+  const progress = getNodeProgress(node)
 
   // 0. Invisible hitbox — ensures the node is easy to click/hover
   const hitbox = createHitboxSprite()
@@ -543,8 +649,8 @@ export function createNodeObject(node: Graph3DNode): THREE.Object3D {
     group.add(glow)
   }
 
-  // 2. Ring + circular label (+ optional subtitle on top arc)
-  const ringLabel = createRingLabelSprite(node.label, color, energy, subtitle)
+  // 2. Ring + circular label + progress arc + working badge
+  const ringLabel = createRingLabelSprite(node.label, color, energy, subtitle, progress, status)
   group.add(ringLabel)
 
   // 3. Central emoji — THE primary visual element (on top), status-aware
