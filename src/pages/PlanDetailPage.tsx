@@ -3,11 +3,11 @@ import { useParams, Link } from 'react-router-dom'
 import { useSetAtom, useAtomValue } from 'jotai'
 import React from 'react'
 import { ChevronsUpDown, ChevronRight, Flag, FolderKanban, GitCommitHorizontal, Layers, Box } from 'lucide-react'
-import { Card, CardHeader, CardTitle, CardContent, LoadingPage, ErrorState, Badge, Button, ConfirmDialog, FormDialog, LinkEntityDialog, LinkedEntityBadge, InteractiveTaskStatusBadge, InteractiveDecisionStatusBadge, PageHeader, StatusSelect, SectionNav } from '@/components/ui'
+import { Card, CardHeader, CardTitle, CardContent, LoadingPage, ErrorState, Badge, Button, ConfirmDialog, FormDialog, LinkEntityDialog, LinkedEntityBadge, InteractiveTaskStatusBadge, InteractiveDecisionStatusBadge, ViewToggle, PageHeader, StatusSelect, SectionNav } from '@/components/ui'
 import type { ParentLink } from '@/components/ui/PageHeader'
 import { plansApi, tasksApi, projectsApi, workspacesApi, decisionsApi } from '@/services'
 import { KanbanBoard } from '@/components/kanban'
-import { useConfirmDialog, useFormDialog, useLinkDialog, useToast, useSectionObserver, useWorkspaceSlug, useViewTransition } from '@/hooks'
+import { useViewMode, useConfirmDialog, useFormDialog, useLinkDialog, useToast, useSectionObserver, useWorkspaceSlug, useViewTransition } from '@/hooks'
 import { workspacePath } from '@/utils/paths'
 import { chatSuggestedProjectIdAtom, planRefreshAtom, taskRefreshAtom, projectRefreshAtom } from '@/atoms'
 import { CreateTaskForm, CreateConstraintForm, EditPlanForm } from '@/components/forms'
@@ -37,6 +37,7 @@ export function PlanDetailPage() {
   const [graph, setGraph] = useState<DependencyGraph | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [viewMode, setViewMode] = useViewMode()
   const confirmDialog = useConfirmDialog()
   const taskFormDialog = useFormDialog()
   const constraintFormDialog = useFormDialog()
@@ -302,7 +303,6 @@ export function PlanDetailPage() {
   const sections = [
     { id: 'overview', label: 'Overview' },
     ...(graph && (graph.nodes || []).length > 0 ? [{ id: 'graph', label: 'Waves', count: (graph.nodes || []).length }] : []),
-    ...(tasks.length > 0 ? [{ id: 'kanban', label: 'Kanban', count: tasks.length }] : []),
     { id: 'tasks', label: 'Tasks', count: tasks.length },
     { id: 'commits', label: 'Commits', count: commits.length },
     { id: 'constraints', label: 'Constraints', count: constraints.length },
@@ -420,13 +420,13 @@ export function PlanDetailPage() {
               <div className="flex items-center gap-3">
                 <CardTitle>{graphViewMode === 'waves' ? 'Execution Waves' : graphViewMode === '3d' ? '3D Universe' : 'Dependency Graph'}</CardTitle>
                 {/* Toggle DAG / Waves */}
-                <div className="flex items-center rounded-lg bg-white/[0.06] p-0.5">
+                <div className="flex items-center rounded-lg bg-gray-800/60 border border-gray-700/50 p-0.5">
                   <button
                     onClick={() => setGraphViewMode('dag')}
                     className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
                       graphViewMode === 'dag'
-                        ? 'bg-white/[0.1] text-gray-200 font-medium'
-                        : 'text-gray-500 hover:text-gray-400'
+                        ? 'bg-indigo-600 text-white font-medium shadow-sm'
+                        : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'
                     }`}
                   >
                     DAG
@@ -442,8 +442,8 @@ export function PlanDetailPage() {
                     disabled={wavesLoading}
                     className={`px-2.5 py-1 text-xs rounded-md transition-colors flex items-center gap-1.5 ${
                       graphViewMode === 'waves'
-                        ? 'bg-white/[0.1] text-gray-200 font-medium'
-                        : 'text-gray-500 hover:text-gray-400'
+                        ? 'bg-indigo-600 text-white font-medium shadow-sm'
+                        : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'
                     } ${wavesLoading ? 'opacity-50' : ''}`}
                   >
                     <Layers className="w-3 h-3" />
@@ -453,8 +453,8 @@ export function PlanDetailPage() {
                     onClick={() => setGraphViewMode('3d')}
                     className={`px-2.5 py-1 text-xs rounded-md transition-colors flex items-center gap-1.5 ${
                       graphViewMode === '3d'
-                        ? 'bg-white/[0.1] text-gray-200 font-medium'
-                        : 'text-gray-500 hover:text-gray-400'
+                        ? 'bg-indigo-600 text-white font-medium shadow-sm'
+                        : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'
                     }`}
                   >
                     <Box className="w-3 h-3" />
@@ -504,27 +504,6 @@ export function PlanDetailPage() {
         </section>
       )}
 
-      {/* Kanban */}
-      {tasks.length > 0 && (
-        <section id="kanban" className="scroll-mt-20">
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle><FolderKanban className="w-4 h-4 inline mr-1.5 -mt-0.5" />Kanban ({tasks.length})</CardTitle>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <KanbanBoard
-              fetchFn={kanbanFetchFn}
-              onTaskStatusChange={handleTaskStatusChange}
-              onTaskClick={(taskId) => navigate(workspacePath(wsSlug, `/tasks/${taskId}`), { type: 'card-click' })}
-              refreshTrigger={taskRefresh}
-            />
-          </CardContent>
-        </Card>
-        </section>
-      )}
-
       {/* Tasks */}
       <section id="tasks" className="scroll-mt-20">
       <Card>
@@ -532,7 +511,7 @@ export function PlanDetailPage() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <CardTitle>Tasks ({tasks.length})</CardTitle>
-              {tasks.length > 0 && (
+              {tasks.length > 0 && viewMode === 'list' && (
                 <button
                   onClick={() => {
                     if (tasksAllExpanded) {
@@ -551,12 +530,20 @@ export function PlanDetailPage() {
             </div>
             <div className="flex items-center gap-2">
               <Button size="sm" onClick={() => taskFormDialog.open({ title: 'Add Task', size: 'lg' })}>Add Task</Button>
+              <ViewToggle value={viewMode} onChange={setViewMode} />
             </div>
           </div>
         </CardHeader>
         <CardContent>
           {tasks.length === 0 ? (
             <p className="text-gray-500 text-sm">No tasks in this plan</p>
+          ) : viewMode === 'kanban' ? (
+            <KanbanBoard
+              fetchFn={kanbanFetchFn}
+              onTaskStatusChange={handleTaskStatusChange}
+              onTaskClick={(taskId) => navigate(workspacePath(wsSlug, `/tasks/${taskId}`), { type: 'card-click' })}
+              refreshTrigger={taskRefresh}
+            />
           ) : (
             <div className="space-y-2">
               {tasks.map((task) => (
