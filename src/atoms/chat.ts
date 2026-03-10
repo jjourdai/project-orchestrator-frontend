@@ -1,4 +1,5 @@
 import { atom } from 'jotai'
+import { atomWithStorage } from 'jotai/utils'
 import type { ChatPanelMode, PermissionConfig, PermissionMode, Project, WsConnectionStatus } from '@/types'
 
 /** Hint set by pages that know which project the user is looking at */
@@ -53,6 +54,9 @@ export const chatAllProjectsModeAtom = atom<boolean>(true)
 
 /** Whether the active workspace has at least one project (set by ProjectSelect after loading) */
 export const chatWorkspaceHasProjectsAtom = atom<boolean>(false)
+
+/** Whether spawned (child) sessions are visible in the session list */
+export const showSpawnedSessionsAtom = atomWithStorage<boolean>('show-spawned-sessions', true)
 
 /** Derived: true when permission mode requires interactive approval (not bypassPermissions) */
 export const chatPermissionInteractiveAtom = atom((get) => {

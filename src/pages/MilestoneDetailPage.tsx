@@ -1,11 +1,13 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, lazy, Suspense } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useAtomValue } from 'jotai'
-import { ChevronsUpDown, Unlink, Link2 } from 'lucide-react'
+import { Box, ChevronsUpDown, Unlink, Link2 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardContent, LoadingPage, ErrorState, Badge, Button, ConfirmDialog, LinkEntityDialog, ProgressBar, ViewToggle, PageHeader, StatusSelect, SectionNav } from '@/components/ui'
 import { ExpandablePlanRow, ExpandableTaskRow } from '@/components/expandable'
 import { workspacesApi, plansApi, tasksApi } from '@/services'
 import { PlanKanbanBoard } from '@/components/kanban'
+import { useMilestoneUniverse } from '@/components/universe'
+const Universe3DPanel = lazy(() => import('@/components/universe/Universe3DPanel'))
 import { useViewMode, useConfirmDialog, useLinkDialog, useToast, useSectionObserver, useWorkspaceSlug, useViewTransition } from '@/hooks'
 import { workspacePath } from '@/utils/paths'
 import { milestoneRefreshAtom, planRefreshAtom, taskRefreshAtom, projectRefreshAtom } from '@/atoms'
@@ -36,6 +38,8 @@ export function MilestoneDetailPage() {
   const [tasksExpandAll, setTasksExpandAll] = useState(0)
   const [tasksCollapseAll, setTasksCollapseAll] = useState(0)
   const [tasksAllExpanded, setTasksAllExpanded] = useState(false)
+  const [show3D, setShow3D] = useState(false)
+  const milestoneUniverse = useMilestoneUniverse(show3D ? milestoneId : undefined)
 
   const refreshData = useCallback(async () => {
     if (!milestoneId) return
@@ -155,7 +159,13 @@ export function MilestoneDetailPage() {
       <PageHeader
         title={milestone.title}
         viewTransitionName={`milestone-title-${milestone.id}`}
-        description={milestone.description}
+        description={show3D ? undefined : milestone.description}
+        actions={
+          <Button size="sm" variant={show3D ? 'primary' : 'secondary'} onClick={() => setShow3D(!show3D)}>
+            <Box className="w-3.5 h-3.5 mr-1.5" />
+            {show3D ? 'Description' : '3D View'}
+          </Button>
+        }
         status={
           <StatusSelect
             status={milestone.status?.toLowerCase() as MilestoneStatus}
@@ -201,6 +211,29 @@ export function MilestoneDetailPage() {
           </div>
         )}
       </PageHeader>
+
+      {/* Inline 3D Universe View */}
+      {show3D && milestoneId && (
+        <Suspense fallback={
+          <div className="relative rounded-xl bg-[#0a0a0f] flex items-center justify-center" style={{ height: 500 }}>
+            <div className="text-gray-400 animate-pulse text-sm">Loading 3D engine...</div>
+          </div>
+        }>
+          <Universe3DPanel
+            nodes={milestoneUniverse.nodes}
+            links={milestoneUniverse.links}
+            isLoading={milestoneUniverse.isLoading}
+            error={milestoneUniverse.error}
+            onClose={() => setShow3D(false)}
+            centerType="milestone"
+            legend={[
+              { type: 'milestone', label: 'Milestone (center)' },
+              { type: 'plan', label: 'Plans' },
+              { type: 'task', label: 'Tasks' },
+            ]}
+          />
+        </Suspense>
+      )}
 
       <SectionNav sections={sections} activeSection={activeSection} />
 

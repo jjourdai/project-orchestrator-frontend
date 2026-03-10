@@ -65,6 +65,8 @@ export interface SessionMeta {
   cwd: string
   projectSlug?: string
   workspaceSlug?: string
+  /** Origin of this session if spawned (null = normal conversation) */
+  spawnedBy?: import('@/types').SpawnedBy | null
 }
 
 /**
@@ -1819,7 +1821,7 @@ export function useChat() {
 
     // Fetch session metadata (cwd, project, permission mode) for display in header
     chatApi.getSession(sid).then((session) => {
-      setSessionMeta({ cwd: session.cwd, projectSlug: session.project_slug, workspaceSlug: session.workspace_slug })
+      setSessionMeta({ cwd: session.cwd, projectSlug: session.project_slug, workspaceSlug: session.workspace_slug, spawnedBy: session.spawned_by ?? null })
       // Restore the session's permission mode override
       setPermissionOverride((session.permission_mode as PermissionMode) ?? null)
       // Restore the session's model

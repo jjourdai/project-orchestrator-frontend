@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useState, useCallback } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useSetAtom, useAtomValue } from 'jotai'
-import { FolderOpen, Clipboard, RefreshCw, Trash2, ChevronRight, Orbit, Calendar, Network, Loader2, Brain, AlertTriangle, X } from 'lucide-react'
+import { Box, FolderOpen, Clipboard, RefreshCw, Trash2, ChevronRight, Orbit, Calendar, Network, Loader2, Brain, AlertTriangle, X } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardContent, Button, ConfirmDialog, FormDialog, LoadingPage, ErrorState, Badge, PageHeader, SectionNav } from '@/components/ui'
 import { ExpandableMilestoneRow } from '@/components/expandable'
 import {
@@ -13,6 +13,8 @@ import {
   IntelAttention,
 } from '@/components/intelligence/IntelligenceDashboard'
 import { projectsApi, featureGraphsApi } from '@/services'
+import { useProjectUniverse } from '@/components/universe'
+const Universe3DPanel = lazy(() => import('@/components/universe/Universe3DPanel'))
 import { useConfirmDialog, useFormDialog, useToast, useSectionObserver, useWorkspaceSlug } from '@/hooks'
 import { workspacePath } from '@/utils/paths'
 import { chatSuggestedProjectIdAtom, projectRefreshAtom, planRefreshAtom, milestoneRefreshAtom, taskRefreshAtom } from '@/atoms'
@@ -70,6 +72,8 @@ export function ProjectDetailPage() {
 
   // Sub-view state (timeline open by default so the page isn't empty)
   const [activeSubView, setActiveSubView] = useState<SubView | null>('timeline')
+  const [show3D, setShow3D] = useState(false)
+  const projectUniverse = useProjectUniverse(show3D ? slug : undefined)
 
   // Intelligence data (composable sections)
   const intelligence = useIntelligenceData(slug ?? '')
@@ -196,7 +200,13 @@ export function ProjectDetailPage() {
     <div className="pt-6 space-y-6">
       <PageHeader
         title={project.name}
-        description={project.description}
+        description={show3D ? undefined : project.description}
+        actions={
+          <Button size="sm" variant={show3D ? 'primary' : 'secondary'} onClick={() => setShow3D(!show3D)}>
+            <Box className="w-3.5 h-3.5 mr-1.5" />
+            {show3D ? 'Description' : '3D View'}
+          </Button>
+        }
         overflowActions={[
           { label: 'Rename', onClick: () => editProjectDialog.open({ title: 'Edit Project' }) },
           { label: 'Delete', variant: 'danger', onClick: () => confirmDialog.open({
@@ -206,6 +216,28 @@ export function ProjectDetailPage() {
           }) }
         ]}
       />
+
+      {/* Inline 3D Universe View */}
+      {show3D && slug && (
+        <Suspense fallback={
+          <div className="relative rounded-xl bg-[#0a0a0f] flex items-center justify-center" style={{ height: 500 }}>
+            <div className="text-gray-400 animate-pulse text-sm">Loading 3D engine...</div>
+          </div>
+        }>
+          <Universe3DPanel
+            nodes={projectUniverse.nodes}
+            links={projectUniverse.links}
+            isLoading={projectUniverse.isLoading}
+            error={projectUniverse.error}
+            onClose={() => setShow3D(false)}
+            centerType="project"
+            legend={[
+              { type: 'project', label: 'Project (center)' },
+              { type: 'plan', label: 'Plans' },
+            ]}
+          />
+        </Suspense>
+      )}
 
       {/* ── Sub-view switcher (below description) ──────────────────────── */}
       <div className="flex items-center gap-1.5">

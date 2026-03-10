@@ -12,12 +12,12 @@ import {
 } from '@xyflow/react'
 import dagre from 'dagre'
 import { Link } from 'react-router-dom'
-import { AlertTriangle, FileCode2, StickyNote, BookOpen, ExternalLink, CheckCircle2, Circle, Loader2, SkipForward, MessageSquare, FileSearch } from 'lucide-react'
+import { AlertTriangle, FileCode2, StickyNote, BookOpen, ExternalLink, CheckCircle2, Circle, Loader2, SkipForward, MessageSquare, FileSearch, Clock, Bot } from 'lucide-react'
 import { PulseIndicator } from '@/components/ui'
 import { useWorkspaceSlug } from '@/hooks'
 import { workspacePath } from '@/utils/paths'
-import { tasksApi, getEventBus } from '@/services'
-import type { DependencyGraph, DependencyGraphStep, TaskStatus, StepStatus, CrudEvent } from '@/types'
+import { tasksApi, notesApi, getEventBus } from '@/services'
+import type { DependencyGraph, DependencyGraphStep, TaskStatus, StepStatus, ActiveAgentInfo, CrudEvent } from '@/types'
 import '@xyflow/react/dist/style.css'
 
 // ============================================================================
@@ -56,6 +56,9 @@ interface TaskNodeData extends Record<string, unknown> {
   /** Files that conflict with other tasks */
   conflictFiles?: string[]
   hasConflicts?: boolean
+  /** Active agent info (from real-time tracking) */
+  activeAgent?: ActiveAgentInfo | null
+  affectedFiles?: string[]
   onSelect?: (taskId: string) => void
 }
 
@@ -69,6 +72,16 @@ const statusColors: Record<TaskStatus, { bg: string; border: string; text: strin
   blocked: { bg: '#422006', border: '#d97706', text: '#fcd34d', dot: '#f59e0b' },
   completed: { bg: '#052e16', border: '#22c55e', text: '#86efac', dot: '#4ade80' },
   failed: { bg: '#450a0a', border: '#ef4444', text: '#fca5a5', dot: '#f87171' },
+}
+
+const noteTypeColors: Record<string, { bg: string; text: string }> = {
+  guideline: { bg: '#1e3a5f', text: '#93c5fd' },
+  gotcha: { bg: '#5c2d0e', text: '#fdba74' },
+  pattern: { bg: '#2e1065', text: '#c4b5fd' },
+  context: { bg: '#1f2937', text: '#d1d5db' },
+  tip: { bg: '#064e3b', text: '#6ee7b7' },
+  observation: { bg: '#3b3516', text: '#fde68a' },
+  assertion: { bg: '#4c1130', text: '#f9a8d4' },
 }
 
 const statusLabels: Record<TaskStatus, string> = {
@@ -174,10 +187,143 @@ function getLayoutedElements(
 }
 
 // ============================================================================
-// ENRICHED TASK NODE (with inline step list)
+// DURATION FORMATTER
+// ============================================================================
+
+function formatDuration(secs: number): string {
+  if (secs < 60) return `${Math.round(secs)}s`
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ${Math.round(secs % 60)}s`
+  return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`
+}
+
+// ============================================================================
+// RICH TOOLTIP
+// ============================================================================
+
+function TaskTooltip({ data }: { data: TaskNodeData }) {
+  const colors = statusColors[data.status] || statusColors.pending
+  const stepCount = data.stepCount ?? 0
+  const completedStepCount = data.completedStepCount ?? 0
+
+  return (
+    <div
+      className="absolute left-1/2 bottom-full mb-2 -translate-x-1/2 z-50 pointer-events-none"
+      style={{ minWidth: 220, maxWidth: 300 }}
+    >
+      <div
+        className="rounded-lg p-3 shadow-xl text-xs space-y-2"
+        style={{
+          background: '#1a1a2e',
+          border: `1px solid ${colors.border}`,
+        }}
+      >
+        {/* Status + Priority row */}
+        <div className="flex items-center gap-2">
+          <span
+            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium"
+            style={{ background: colors.bg, color: colors.text, border: `1px solid ${colors.border}` }}
+          >
+            <span
+              className="w-1.5 h-1.5 rounded-full"
+              style={{ background: colors.dot }}
+            />
+            {statusLabels[data.status]}
+          </span>
+          {data.priority != null && data.priority > 0 && (
+            <span className="text-[10px] text-gray-400">P{data.priority}</span>
+          )}
+        </div>
+
+        {/* Title */}
+        <p className="text-gray-200 font-medium leading-snug">{data.label}</p>
+
+        {/* Agent indicator */}
+        {data.activeAgent && (
+          <div className="flex items-center gap-1.5 text-indigo-300">
+            <Bot className="w-3 h-3" />
+            <span>Agent active</span>
+            {data.activeAgent.elapsedSecs != null && (
+              <span className="flex items-center gap-0.5 text-gray-400">
+                <Clock className="w-3 h-3" />
+                {formatDuration(data.activeAgent.elapsedSecs)}
+              </span>
+            )}
+            {data.activeAgent.costUsd != null && (
+              <span className="text-gray-500 ml-auto">${data.activeAgent.costUsd.toFixed(3)}</span>
+            )}
+          </div>
+        )}
+
+        {/* Steps progress */}
+        {stepCount > 0 && (
+          <div className="space-y-1">
+            <div className="flex items-center gap-1 text-gray-400">
+              <span>{completedStepCount}/{stepCount} steps</span>
+            </div>
+            <div className="flex gap-0.5">
+              {Array.from({ length: stepCount }, (_, i) => (
+                <span key={i} className="text-[10px]">
+                  {i < completedStepCount ? '\u2705' : '\u2B1C'}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Tags */}
+        {data.tags && data.tags.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {data.tags.slice(0, 5).map((tag) => (
+              <span
+                key={tag}
+                className="px-1.5 py-0.5 rounded text-[10px] bg-white/[0.08] text-gray-400"
+              >
+                {tag}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* Affected files */}
+        {data.affectedFiles && data.affectedFiles.length > 0 && (
+          <div className="space-y-0.5">
+            <div className="text-gray-500 text-[10px] font-medium">Files ({data.affectedFiles.length})</div>
+            <div className="flex flex-wrap gap-1">
+              {data.affectedFiles.slice(0, 4).map((f) => (
+                <span key={f} className="inline-flex items-center gap-0.5 text-[9px] px-1 py-0.5 rounded bg-white/[0.06] text-gray-400" title={f}>
+                  <FileCode2 className="w-2 h-2" />
+                  {f.split('/').pop()}
+                </span>
+              ))}
+              {data.affectedFiles.length > 4 && (
+                <span className="text-[9px] text-gray-600">+{data.affectedFiles.length - 4}</span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Assigned to */}
+        {data.assignedTo && (
+          <div className="text-gray-500 text-[10px]">
+            Assigned to: <span className="text-gray-300">{data.assignedTo}</span>
+          </div>
+        )}
+      </div>
+      {/* Tooltip arrow */}
+      <div
+        className="absolute left-1/2 -translate-x-1/2 w-2 h-2 rotate-45"
+        style={{ background: '#1a1a2e', borderRight: `1px solid ${colors.border}`, borderBottom: `1px solid ${colors.border}`, bottom: -4 }}
+      />
+    </div>
+  )
+}
+
+// ============================================================================
+// ENRICHED TASK NODE (with inline step list + tooltip on hover)
 // ============================================================================
 
 function TaskNodeComponent({ data }: NodeProps<Node<TaskNodeData>>) {
+  const [hovered, setHovered] = useState(false)
   const colors = statusColors[data.status] || statusColors.pending
   const isInProgress = data.status === 'in_progress'
 
@@ -201,7 +347,14 @@ function TaskNodeComponent({ data }: NodeProps<Node<TaskNodeData>>) {
   )
 
   return (
-    <div className="relative">
+    <div
+      className="relative"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      {/* Tooltip on hover */}
+      {hovered && <TaskTooltip data={data} />}
+
       <div
         onClick={handleClick}
         className={`cursor-pointer transition-all duration-150 hover:scale-[1.02] hover:shadow-lg ${isInProgress ? 'dep-node-pulse' : ''}`}
@@ -236,6 +389,13 @@ function TaskNodeComponent({ data }: NodeProps<Node<TaskNodeData>>) {
           <span className="text-[10px] font-medium" style={{ color: colors.text }}>
             {statusLabels[data.status]}
           </span>
+
+          {/* Active agent indicator */}
+          {data.activeAgent && (
+            <span className="inline-flex items-center gap-0.5 ml-0.5">
+              <Bot className="w-2.5 h-2.5 text-indigo-400" />
+            </span>
+          )}
 
           {isInProgress && data.assignedTo && (
             <span className="inline-flex items-center gap-0.5 ml-0.5">
@@ -414,10 +574,28 @@ interface DrawerStep {
   status: StepStatus
 }
 
+interface DrawerDecision {
+  id: string
+  description: string
+  rationale?: string
+  chosen_option?: string
+  status: string
+}
+
+interface DrawerNote {
+  id: string
+  content: string
+  note_type: string
+  importance?: string
+  tags?: string[]
+}
+
 export function TaskDrawer({ taskId, onClose, onOpenFullPage }: TaskDrawerProps) {
   const wsSlug = useWorkspaceSlug()
   const [task, setTask] = useState<DrawerTask | null>(null)
   const [steps, setSteps] = useState<DrawerStep[]>([])
+  const [decisions, setDecisions] = useState<DrawerDecision[]>([])
+  const [notes, setNotes] = useState<DrawerNote[]>([])
   const [loading, setLoading] = useState(true)
   const mountedRef = useRef(true)
 
@@ -449,6 +627,16 @@ export function TaskDrawer({ taskId, onClose, onOpenFullPage }: TaskDrawerProps)
           assigned_to: details.assigned_to,
         })
         setSteps(Array.isArray(stepsList) ? stepsList : [])
+
+        // Fetch decisions and notes in parallel (non-blocking)
+        const [decisionsData, notesData] = await Promise.all([
+          (details.decisions || []) as DrawerDecision[],
+          notesApi.getEntityNotes('task', taskId).catch(() => ({ items: [] })),
+        ])
+        if (cancelled || !mountedRef.current) return
+        setDecisions(Array.isArray(decisionsData) ? decisionsData : [])
+        const noteItems = (notesData as { items?: DrawerNote[] }).items || (Array.isArray(notesData) ? notesData : [])
+        setNotes(noteItems as DrawerNote[])
       } catch (err) {
         console.error('[TaskDrawer] Failed to load task:', err)
       } finally {
@@ -616,6 +804,7 @@ export function TaskDrawer({ taskId, onClose, onOpenFullPage }: TaskDrawerProps)
             {task.affected_files.length > 0 && (
               <div>
                 <h4 className="text-xs font-medium text-gray-500 uppercase mb-2">
+                  <FileCode2 className="w-3 h-3 inline mr-1 -mt-0.5" />
                   Affected Files ({task.affected_files.length})
                 </h4>
                 <div className="space-y-0.5">
@@ -625,6 +814,94 @@ export function TaskDrawer({ taskId, onClose, onOpenFullPage }: TaskDrawerProps)
                   {task.affected_files.length > 10 && (
                     <p className="text-xs text-gray-600">+{task.affected_files.length - 10} more</p>
                   )}
+                </div>
+              </div>
+            )}
+
+            {/* Decisions */}
+            {decisions.length > 0 && (
+              <div>
+                <h4 className="text-xs font-medium text-gray-500 uppercase mb-2">
+                  <BookOpen className="w-3 h-3 inline mr-1 -mt-0.5" />
+                  Decisions ({decisions.length})
+                </h4>
+                <div className="space-y-2">
+                  {decisions.map((d) => (
+                    <div
+                      key={d.id}
+                      className="rounded-lg p-2.5 bg-white/[0.03] border border-white/[0.06] space-y-1.5"
+                    >
+                      <p className="text-sm text-gray-200 leading-snug">{d.description}</p>
+                      {d.chosen_option && (
+                        <div className="flex items-start gap-1.5">
+                          <span className="text-[10px] text-emerald-500 font-medium uppercase mt-0.5 flex-shrink-0">Chosen</span>
+                          <span className="text-xs text-emerald-300">{d.chosen_option}</span>
+                        </div>
+                      )}
+                      {d.rationale && (
+                        <p className="text-xs text-gray-500 italic leading-relaxed">{d.rationale}</p>
+                      )}
+                      <span
+                        className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium"
+                        style={{
+                          background: d.status === 'accepted' ? '#052e16' : d.status === 'deprecated' ? '#422006' : '#1f2937',
+                          color: d.status === 'accepted' ? '#86efac' : d.status === 'deprecated' ? '#fcd34d' : '#d1d5db',
+                        }}
+                      >
+                        {d.status}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Notes / Knowledge */}
+            {notes.length > 0 && (
+              <div>
+                <h4 className="text-xs font-medium text-gray-500 uppercase mb-2">
+                  <StickyNote className="w-3 h-3 inline mr-1 -mt-0.5" />
+                  Notes ({notes.length})
+                </h4>
+                <div className="space-y-2">
+                  {notes.map((n) => (
+                    <div
+                      key={n.id}
+                      className="rounded-lg p-2.5 bg-white/[0.03] border border-white/[0.06] space-y-1.5"
+                    >
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span
+                          className="px-1.5 py-0.5 rounded text-[10px] font-medium"
+                          style={{
+                            background: noteTypeColors[n.note_type]?.bg || '#1f2937',
+                            color: noteTypeColors[n.note_type]?.text || '#d1d5db',
+                          }}
+                        >
+                          {n.note_type}
+                        </span>
+                        {n.importance && (
+                          <span className={`text-[10px] font-medium ${
+                            n.importance === 'critical' ? 'text-red-400'
+                            : n.importance === 'high' ? 'text-orange-400'
+                            : n.importance === 'medium' ? 'text-yellow-400'
+                            : 'text-gray-500'
+                          }`}>
+                            {n.importance}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-gray-300 leading-relaxed whitespace-pre-wrap line-clamp-4">{n.content}</p>
+                      {n.tags && n.tags.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {n.tags.slice(0, 4).map((tag) => (
+                            <span key={tag} className="px-1 py-0.5 rounded text-[9px] bg-white/[0.06] text-gray-500">
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
@@ -757,6 +1034,8 @@ export function DependencyGraphView({ graph, taskStatuses, onNodeSelect, classNa
           discussedFiles: node.discussed_files ?? [],
           hasConflicts: conflictFilesArr.length > 0,
           conflictFiles: conflictFilesArr,
+          activeAgent: node.activeAgent,
+          affectedFiles: node.affectedFiles,
           onSelect: onNodeSelect,
         },
       }

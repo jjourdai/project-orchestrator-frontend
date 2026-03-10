@@ -1,17 +1,19 @@
-import { useEffect, useState, useCallback, lazy, Suspense } from 'react'
+import { useEffect, useState, useCallback, useMemo, lazy, Suspense } from 'react'
 import { useParams, Link, useLocation } from 'react-router-dom'
 import { useAtomValue } from 'jotai'
-import { ClipboardList, FolderKanban, GitCommitHorizontal, Pencil } from 'lucide-react'
+import { ClipboardList, FolderKanban, GitCommitHorizontal, Pencil, Box } from 'lucide-react'
 
-const TaskUniverse3D = lazy(() => import('@/components/tasks/TaskUniverse3D'))
-import { Card, CardHeader, CardTitle, CardContent, LoadingPage, ErrorState, Badge, Button, ConfirmDialog, FormDialog, LinkEntityDialog, TaskStatusBadge, InteractiveStepStatusBadge, InteractiveDecisionStatusBadge, ProgressBar, PageHeader, StatusSelect, SectionNav } from '@/components/ui'
+import { useTaskUniverse } from '@/components/universe'
+const Universe3DPanel = lazy(() => import('@/components/universe/Universe3DPanel'))
+import { Card, CardHeader, CardTitle, CardContent, LoadingPage, ErrorState, Badge, Button, ConfirmDialog, FormDialog, LinkEntityDialog, TaskStatusBadge, InteractiveStepStatusBadge, InteractiveDecisionStatusBadge, ProgressBar, PageHeader, StatusSelect, SectionNav, ViewToggle } from '@/components/ui'
 import type { ParentLink } from '@/components/ui/PageHeader'
 import { tasksApi, plansApi, projectsApi, decisionsApi } from '@/services'
-import { useConfirmDialog, useFormDialog, useLinkDialog, useToast, useSectionObserver, useWorkspaceSlug, useViewTransition } from '@/hooks'
+import { useConfirmDialog, useFormDialog, useLinkDialog, useToast, useSectionObserver, useWorkspaceSlug, useViewTransition, useViewMode } from '@/hooks'
 import { workspacePath } from '@/utils/paths'
 import { taskRefreshAtom, projectRefreshAtom, planRefreshAtom } from '@/atoms'
 import { CreateStepForm, CreateDecisionForm, EditTaskForm, EditStepForm } from '@/components/forms'
 import { CommitList } from '@/components/commits'
+import { UniversalKanban, createStepKanbanConfig } from '@/components/kanban'
 import type { Task, Step, Decision, Commit, TaskStatus, StepStatus, DecisionStatus, Project } from '@/types'
 
 // The API response structure
@@ -57,6 +59,7 @@ export function TaskDetailPage() {
   const [commits, setCommits] = useState<Commit[]>([])
   const [commitShaInput, setCommitShaInput] = useState('')
   const [show3D, setShow3D] = useState(false)
+  const taskUniverse = useTaskUniverse(show3D ? taskId : undefined)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -196,6 +199,36 @@ export function TaskDetailPage() {
 
   const sectionIds = ['steps', 'dependencies', 'decisions', 'commits']
   const activeSection = useSectionObserver(sectionIds)
+  const [stepsViewMode, setStepsViewMode] = useViewMode()
+
+  // Step kanban config — wraps local steps data as a fetchFn
+  const stepFetchFn = useCallback(
+    async (params: Record<string, unknown>) => {
+      const status = params.status as string
+      const items = steps.filter((s) => s.status === status)
+      return { items, total: items.length, limit: 100, offset: 0 }
+    },
+    [steps],
+  )
+
+  const handleStepStatusChange = useCallback(
+    async (stepId: string, newStatus: string) => {
+      await tasksApi.updateStep(stepId, { status: newStatus })
+      setSteps((prev) => prev.map((s) => s.id === stepId ? { ...s, status: newStatus as StepStatus } : s))
+    },
+    [],
+  )
+
+  const stepKanbanConfig = useMemo(
+    () =>
+      createStepKanbanConfig({
+        fetchFn: stepFetchFn,
+        onStatusChange: handleStepStatusChange,
+      }),
+    [stepFetchFn, handleStepStatusChange],
+  )
+
+  const stepKanbanRefreshKey = useMemo(() => steps.length + steps.reduce((acc, s) => acc + s.status, '').length, [steps])
 
   const editStepForm = EditStepForm({
     initialValues: { description: editingStep?.description ?? '', verification: editingStep?.verification },
@@ -259,7 +292,7 @@ export function TaskDetailPage() {
       <PageHeader
         title={task.title || 'Task'}
         viewTransitionName={`task-title-${task.id}`}
-        description={task.description}
+        description={show3D ? undefined : task.description}
         parentLinks={parentLinks.length > 0 ? parentLinks : undefined}
         status={
           <StatusSelect
@@ -292,16 +325,21 @@ export function TaskDetailPage() {
           ...(task.actual_complexity ? [{ label: 'Actual complexity', value: String(task.actual_complexity) }] : []),
         ]}
         actions={
-          tags.length > 0 ? (
-            <div className="flex flex-wrap gap-1">
-              {tags.map((tag, index) => (
-                <Badge key={`${tag}-${index}`}>{tag}</Badge>
-              ))}
-            </div>
-          ) : undefined
+          <div className="flex items-center gap-2">
+            {tags.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {tags.map((tag, index) => (
+                  <Badge key={`${tag}-${index}`}>{tag}</Badge>
+                ))}
+              </div>
+            )}
+            <Button size="sm" variant={show3D ? 'primary' : 'secondary'} onClick={() => setShow3D(!show3D)}>
+              <Box className="w-3.5 h-3.5 mr-1.5" />
+              {show3D ? 'Description' : '3D View'}
+            </Button>
+          </div>
         }
         overflowActions={[
-          { label: '3D View', onClick: () => setShow3D(true) },
           { label: 'Edit', onClick: () => editTaskDialog.open({ title: 'Edit Task' }) },
           { label: 'Delete', variant: 'danger', onClick: () => confirmDialog.open({
             title: 'Delete Task',
@@ -319,6 +357,31 @@ export function TaskDetailPage() {
         ]}
       />
 
+      {/* Inline 3D Universe View */}
+      {show3D && taskId && (
+        <Suspense fallback={
+          <div className="relative rounded-xl bg-[#0a0a0f] flex items-center justify-center" style={{ height: 500 }}>
+            <div className="text-gray-400 animate-pulse text-sm">Loading 3D engine...</div>
+          </div>
+        }>
+          <Universe3DPanel
+            nodes={taskUniverse.nodes}
+            links={taskUniverse.links}
+            isLoading={taskUniverse.isLoading}
+            error={taskUniverse.error}
+            onClose={() => setShow3D(false)}
+            centerType="task"
+            legend={[
+              { type: 'task', label: 'Task (center)' },
+              { type: 'step', label: 'Steps' },
+              { type: 'decision', label: 'Decisions' },
+              { type: 'file', label: 'Files' },
+              { type: 'commit', label: 'Commits' },
+            ]}
+          />
+        </Suspense>
+      )}
+
       <SectionNav sections={sections} activeSection={activeSection} />
 
       {/* Steps */}
@@ -332,6 +395,7 @@ export function TaskDetailPage() {
                 <span className="text-sm text-gray-400">{completedSteps}/{steps.length} completed</span>
               )}
               <Button size="sm" onClick={() => stepFormDialog.open({ title: 'Add Step' })}>Add Step</Button>
+              <ViewToggle value={stepsViewMode} onChange={setStepsViewMode} />
             </div>
           </div>
           {steps.length > 0 && <ProgressBar value={stepProgress} size="sm" className="mt-2" />}
@@ -339,6 +403,11 @@ export function TaskDetailPage() {
         <CardContent>
           {steps.length === 0 ? (
             <p className="text-gray-500 text-sm">No steps defined</p>
+          ) : stepsViewMode === 'kanban' ? (
+            <UniversalKanban
+              config={stepKanbanConfig}
+              refreshTrigger={stepKanbanRefreshKey}
+            />
           ) : (
             <div className="space-y-2">
               {steps.map((step, index) => (
@@ -584,17 +653,6 @@ export function TaskDetailPage() {
       </FormDialog>
       <LinkEntityDialog {...linkDialog.dialogProps} />
       <ConfirmDialog {...confirmDialog.dialogProps} />
-
-      {/* 3D Universe View */}
-      {show3D && taskId && (
-        <Suspense fallback={
-          <div className="fixed inset-0 z-50 bg-[#0a0a0f] flex items-center justify-center">
-            <div className="text-gray-400 animate-pulse text-lg">Loading 3D engine...</div>
-          </div>
-        }>
-          <TaskUniverse3D taskId={taskId} onClose={() => setShow3D(false)} />
-        </Suspense>
-      )}
     </div>
   )
 }
