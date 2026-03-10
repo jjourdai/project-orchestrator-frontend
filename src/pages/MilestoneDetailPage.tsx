@@ -1,15 +1,13 @@
-import { useEffect, useState, useCallback, lazy, Suspense } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useAtomValue } from 'jotai'
-import { Box, ChevronsUpDown, Unlink, Link2 } from 'lucide-react'
+import { ChevronsUpDown, Unlink, Link2 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardContent, LoadingPage, ErrorState, Badge, Button, ConfirmDialog, LinkEntityDialog, ProgressBar, ViewToggle, PageHeader, StatusSelect, SectionNav } from '@/components/ui'
 import { ExpandablePlanRow, ExpandableTaskRow } from '@/components/expandable'
-import { UnifiedGraphSection } from '@/components/graph/UnifiedGraphSection'
+import { UnifiedGraphSection, type GraphBreadcrumb } from '@/components/graph/UnifiedGraphSection'
 import { MilestoneGraphAdapter } from '@/adapters/MilestoneGraphAdapter'
 import { workspacesApi, plansApi, tasksApi } from '@/services'
 import { PlanKanbanBoard } from '@/components/kanban'
-import { useMilestoneUniverse } from '@/components/universe'
-const Universe3DPanel = lazy(() => import('@/components/universe/Universe3DPanel'))
 import { useViewMode, useConfirmDialog, useLinkDialog, useToast, useSectionObserver, useWorkspaceSlug, useViewTransition } from '@/hooks'
 import { useMilestoneGraphData } from '@/hooks/useMilestoneGraphData'
 import { workspacePath } from '@/utils/paths'
@@ -42,9 +40,6 @@ export function MilestoneDetailPage() {
   const [tasksExpandAll, setTasksExpandAll] = useState(0)
   const [tasksCollapseAll, setTasksCollapseAll] = useState(0)
   const [tasksAllExpanded, setTasksAllExpanded] = useState(false)
-  const [show3D, setShow3D] = useState(false)
-  const milestoneUniverse = useMilestoneUniverse(show3D ? milestoneId : undefined)
-
   const refreshData = useCallback(async () => {
     if (!milestoneId) return
     setError(null)
@@ -154,6 +149,24 @@ export function MilestoneDetailPage() {
     progress,
   })
 
+  // Fractal drill-down: navigate to plan or task detail page
+  const handleDrillDown = useCallback((target: { level: string; id: string }) => {
+    if (target.level === 'plan') {
+      navigate(workspacePath(wsSlug, `/plans/${target.id}#graph`))
+    } else if (target.level === 'task') {
+      navigate(workspacePath(wsSlug, `/tasks/${target.id}#graph`))
+    }
+  }, [navigate, wsSlug])
+
+  // Breadcrumb trail for graph section
+  const graphBreadcrumbs = useMemo<GraphBreadcrumb[]>(() => {
+    const crumbs: GraphBreadcrumb[] = []
+    if (milestone) {
+      crumbs.push({ label: `Milestone: ${milestone.title || milestone.id.slice(0, 8)}` })
+    }
+    return crumbs
+  }, [milestone])
+
   const sectionIds = ['graph', 'progress', 'plans', 'tasks', 'projects']
   const activeSection = useSectionObserver(sectionIds)
 
@@ -174,13 +187,7 @@ export function MilestoneDetailPage() {
       <PageHeader
         title={milestone.title}
         viewTransitionName={`milestone-title-${milestone.id}`}
-        description={show3D ? undefined : milestone.description}
-        actions={
-          <Button size="sm" variant={show3D ? 'primary' : 'secondary'} onClick={() => setShow3D(!show3D)}>
-            <Box className="w-3.5 h-3.5 mr-1.5" />
-            {show3D ? 'Description' : '3D View'}
-          </Button>
-        }
+        description={milestone.description}
         status={
           <StatusSelect
             status={milestone.status?.toLowerCase() as MilestoneStatus}
@@ -227,29 +234,6 @@ export function MilestoneDetailPage() {
         )}
       </PageHeader>
 
-      {/* Inline 3D Universe View */}
-      {show3D && milestoneId && (
-        <Suspense fallback={
-          <div className="relative rounded-xl bg-[#0a0a0f] flex items-center justify-center" style={{ height: 500 }}>
-            <div className="text-gray-400 animate-pulse text-sm">Loading 3D engine...</div>
-          </div>
-        }>
-          <Universe3DPanel
-            nodes={milestoneUniverse.nodes}
-            links={milestoneUniverse.links}
-            isLoading={milestoneUniverse.isLoading}
-            error={milestoneUniverse.error}
-            onClose={() => setShow3D(false)}
-            centerType="milestone"
-            legend={[
-              { type: 'milestone', label: 'Milestone (center)' },
-              { type: 'plan', label: 'Plans' },
-              { type: 'task', label: 'Tasks' },
-            ]}
-          />
-        </Suspense>
-      )}
-
       <SectionNav sections={sections} activeSection={activeSection} />
 
       {/* Graph */}
@@ -260,6 +244,8 @@ export function MilestoneDetailPage() {
             data={milestoneGraphData.data}
             availableViews={['dag', '3d']}
             defaultView="dag"
+            onDrillDown={handleDrillDown}
+            breadcrumbs={graphBreadcrumbs}
           />
         </section>
       )}

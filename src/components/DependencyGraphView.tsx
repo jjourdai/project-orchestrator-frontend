@@ -30,6 +30,8 @@ export interface DependencyGraphViewProps {
   taskStatuses?: Map<string, TaskStatus>
   /** Callback when a node is clicked (opens task drawer) */
   onNodeSelect?: (taskId: string) => void
+  /** Callback when a node is double-clicked (fractal drill-down). Receives the FractalNode id (e.g. "task:uuid") */
+  onNodeDoubleClick?: (nodeId: string) => void
   className?: string
 }
 
@@ -60,6 +62,7 @@ interface TaskNodeData extends Record<string, unknown> {
   activeAgent?: ActiveAgentInfo | null
   affectedFiles?: string[]
   onSelect?: (taskId: string) => void
+  onDoubleClick?: (taskId: string) => void
 }
 
 // ============================================================================
@@ -363,6 +366,14 @@ function TaskNodeComponent({ data }: NodeProps<Node<TaskNodeData>>) {
     [data],
   )
 
+  const handleDoubleClick = useCallback(
+    (e: MouseEvent) => {
+      e.stopPropagation()
+      data.onDoubleClick?.(data.taskId)
+    },
+    [data],
+  )
+
   return (
     <div
       className="relative"
@@ -374,6 +385,7 @@ function TaskNodeComponent({ data }: NodeProps<Node<TaskNodeData>>) {
 
       <div
         onClick={handleClick}
+        onDoubleClick={handleDoubleClick}
         className={`cursor-pointer transition-all duration-150 hover:scale-[1.02] hover:shadow-lg ${isInProgress ? 'dep-node-pulse' : ''}`}
         style={{
           background: colors.bg,
@@ -938,7 +950,7 @@ export function TaskDrawer({ taskId, onClose, onOpenFullPage }: TaskDrawerProps)
 // MAIN COMPONENT
 // ============================================================================
 
-export function DependencyGraphView({ graph, taskStatuses, onNodeSelect, className = '' }: DependencyGraphViewProps) {
+export function DependencyGraphView({ graph, taskStatuses, onNodeSelect, onNodeDoubleClick, className = '' }: DependencyGraphViewProps) {
   // Local status overrides from CrudEvents (real-time)
   const [liveStatuses, setLiveStatuses] = useState<Map<string, TaskStatus>>(new Map())
   // Live step updates from CrudEvents (real-time step status changes)
@@ -1048,6 +1060,7 @@ export function DependencyGraphView({ graph, taskStatuses, onNodeSelect, classNa
           activeAgent: node.activeAgent,
           affectedFiles: node.affectedFiles,
           onSelect: onNodeSelect,
+          onDoubleClick: onNodeDoubleClick,
         },
       }
     })
@@ -1085,7 +1098,7 @@ export function DependencyGraphView({ graph, taskStatuses, onNodeSelect, classNa
     const calculatedHeight = Math.max(400, Math.min(1200, maxBottom + 80))
 
     return { layoutedNodes: ln, layoutedEdges: le, graphHeight: calculatedHeight }
-  }, [graph, taskStatuses, liveStatuses, liveStepUpdates, liveStepProgress, conflictLookup, onNodeSelect])
+  }, [graph, taskStatuses, liveStatuses, liveStepUpdates, liveStepProgress, conflictLookup, onNodeSelect, onNodeDoubleClick])
 
   if (layoutedNodes.length === 0) {
     return <p className="text-gray-500 text-sm">No tasks to display</p>
