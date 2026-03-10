@@ -8,7 +8,7 @@ import { NodeInspector } from './NodeInspector'
 import { LayerControls } from './LayerControls'
 import { SpreadingActivation, activationSearchOpenAtom } from './SpreadingActivation'
 import { GraphLoadingProgress } from './GraphLoadingProgress'
-import { ENTITY_COLORS, PROJECT_COLORS } from '@/constants/intelligence'
+import { ENTITY_COLORS } from '@/constants/intelligence'
 import {
   intelligenceLoadingAtom,
   intelligenceErrorAtom,
@@ -159,6 +159,7 @@ export default function WorkspaceGraphPage({ workspaceSlug, embedded }: Workspac
           })
         }}
         onClearProjectFilters={() => setActiveProjectFilters(new Set())}
+        onHoverProject={setHoveredProjectSlug}
       />
 
       {/* Spreading Activation search (top-center) */}
@@ -253,29 +254,6 @@ export default function WorkspaceGraphPage({ workspaceSlug, embedded }: Workspac
       <div className="absolute bottom-3 left-3 z-40 flex flex-col items-start gap-2 pointer-events-none">
         {/* Loading progress — inline, non-blocking */}
         <GraphLoadingProgress />
-        {/* Project legend — hover to identify in 3D */}
-        {projectMetas && projectMetas.length > 1 && (
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-slate-900/80 backdrop-blur-sm border border-slate-700/60 px-3 py-1.5 pointer-events-auto">
-            {projectMetas.map((p, i) => {
-              const color = PROJECT_COLORS[i % PROJECT_COLORS.length]
-              return (
-                <span
-                  key={p.slug}
-                  className="flex items-center gap-1.5 text-[10px] text-slate-400 cursor-pointer hover:text-white transition-colors"
-                  onMouseEnter={() => setHoveredProjectSlug(p.slug)}
-                  onMouseLeave={() => setHoveredProjectSlug(null)}
-                >
-                  <span
-                    className="w-2.5 h-2.5 rounded-sm shrink-0"
-                    style={{ backgroundColor: color }}
-                  />
-                  {p.name}
-                  <span className="text-[8px] text-slate-600">{p.node_count}</span>
-                </span>
-              )
-            })}
-          </div>
-        )}
         {/* Entity legend */}
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg bg-slate-900/80 backdrop-blur-sm border border-slate-700/60 px-3 py-2 max-w-md pointer-events-auto">
           {ENTITY_LEGEND

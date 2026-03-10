@@ -724,119 +724,60 @@ export default function IntelligenceGraph3D({ nodes, edges }: IntelligenceGraph3
     }
   }, [energyHeatmap, touchesHeatmap, graphData.nodes, activationPhase])
 
-  // ── Legend hover — illuminate nodes matching the hovered entity type ─────
-  const legendDirtyRef = useRef<Map<AnySpriteChild, SpriteOriginal>>(new Map())
-  const legendScaledRef = useRef<Map<THREE.Object3D, THREE.Vector3>>(new Map())
+  // ── Unified highlight effect — single source of truth for legend/project/group hover ──
+  // Merged into ONE effect to eliminate race conditions between independent save/restore refs.
+  // Priority: activation > legendHoveredType > hoveredProjectSlug > highlightedGroup > reset
+  const highlightActiveRef = useRef(false)
 
   useEffect(() => {
-    const lDirty = legendDirtyRef.current
-    const lScaled = legendScaledRef.current
+    const isActivationActive = activationPhase !== 'idle' && activationPhase !== 'searching'
 
-    const restoreLegend = () => {
-      for (const [sprite, orig] of lDirty) { restoreSprite(sprite, orig) }
-      lDirty.clear()
-      for (const [obj, origScale] of lScaled) { obj.scale.copy(origScale) }
-      lScaled.clear()
-    }
+    // Determine which highlight mode is active (by priority)
+    const mode: 'none' | 'legend' | 'project' | 'group' =
+      isActivationActive ? 'none'
+      : legendHoveredType ? 'legend'
+      : hoveredProjectSlug ? 'project'
+      : highlightedGroup ? 'group'
+      : 'none'
 
-    if (activationPhase !== 'idle' && activationPhase !== 'searching') { restoreLegend(); return }
-    if (!legendHoveredType) { restoreLegend(); return }
+    // If no highlight and wasn't active before, nothing to do
+    if (mode === 'none' && !highlightActiveRef.current) return
+
+    highlightActiveRef.current = mode !== 'none'
 
     for (const node of graphData.nodes) {
       const obj = (node as Graph3DNode & { __threeObj?: THREE.Object3D }).__threeObj
       if (!obj) continue
 
-      const isMatch = node.entityType === legendHoveredType
-      const targetOpacity = isMatch ? 1.0 : 0.06
+      let targetOpacity = 1.0
+      let targetScale = 1.0
+
+      if (mode === 'legend') {
+        const isMatch = node.entityType === legendHoveredType
+        targetOpacity = isMatch ? 1.0 : 0.06
+        targetScale = isMatch ? 1.6 : 0.5
+      } else if (mode === 'project') {
+        const nodeProjectSlug = (node.data.projectSlug ?? node.data.project_slug) as string | undefined
+        targetOpacity = nodeProjectSlug === hoveredProjectSlug ? 1.0 : 0.15
+      } else if (mode === 'group') {
+        const isInGroup = highlightedGroup!.has(node.id)
+        targetOpacity = isInGroup ? 1.0 : 0.08
+        targetScale = isInGroup ? 1.3 : 0.6
+      }
+      // mode === 'none' → defaults (1.0 / 1.0) = reset
 
       obj.traverse((child) => {
         if (child instanceof THREE.Sprite && child.material) {
-          if (!lDirty.has(child)) { lDirty.set(child, saveSprite(child)) }
           ;(child.material as THREE.SpriteMaterial).opacity = targetOpacity
           ;(child.material as THREE.SpriteMaterial).needsUpdate = true
         }
       })
 
-      if (!lScaled.has(obj)) { lScaled.set(obj, obj.scale.clone()) }
-      obj.scale.setScalar(isMatch ? 1.6 : 0.5)
+      if (targetScale !== 1.0 || mode === 'none') {
+        obj.scale.setScalar(targetScale)
+      }
     }
-  }, [legendHoveredType, graphData.nodes, activationPhase])
-
-  // ── Project hover highlight — illuminate nodes belonging to hovered project ──
-  const projectDirtyRef = useRef<Map<AnySpriteChild, SpriteOriginal>>(new Map())
-
-  useEffect(() => {
-    if (!graphRef.current) return
-    const pDirty = projectDirtyRef.current
-
-    const restoreAll = () => {
-      for (const [sprite, orig] of pDirty) { restoreSprite(sprite, orig) }
-      pDirty.clear()
-    }
-
-    if (legendHoveredType || (activationPhase !== 'idle' && activationPhase !== 'searching')) { restoreAll(); return }
-    if (!hoveredProjectSlug) { restoreAll(); return }
-
-    for (const node of graphData.nodes) {
-      const obj = (node as Graph3DNode & { __threeObj?: THREE.Object3D }).__threeObj
-      if (!obj) continue
-
-      const nodeProjectSlug = (node.data.projectSlug ?? node.data.project_slug) as string | undefined
-      if (!nodeProjectSlug) continue
-      const isMatch = nodeProjectSlug === hoveredProjectSlug
-
-      obj.traverse((child) => {
-        if (child instanceof THREE.Sprite && child.material) {
-          if (!pDirty.has(child)) { pDirty.set(child, saveSprite(child)) }
-          ;(child.material as THREE.SpriteMaterial).opacity = isMatch ? 1.0 : 0.15
-          ;(child.material as THREE.SpriteMaterial).needsUpdate = true
-        }
-      })
-    }
-  }, [hoveredProjectSlug, legendHoveredType, graphData.nodes, activationPhase])
-
-  // ── Group highlight — isolate a subset of nodes (FG hover, milestone hover, etc.) ──
-  const groupDirtyRef = useRef<Map<AnySpriteChild, SpriteOriginal>>(new Map())
-  const groupScaledRef = useRef<Map<THREE.Object3D, THREE.Vector3>>(new Map())
-
-  useEffect(() => {
-    const gDirty = groupDirtyRef.current
-    const gScaled = groupScaledRef.current
-
-    const restoreGroup = () => {
-      for (const [sprite, orig] of gDirty) { restoreSprite(sprite, orig) }
-      gDirty.clear()
-      for (const [obj, origScale] of gScaled) { obj.scale.copy(origScale) }
-      gScaled.clear()
-    }
-
-    // Skip if higher-priority effects are active
-    if (legendHoveredType || hoveredProjectSlug || (activationPhase !== 'idle' && activationPhase !== 'searching')) {
-      restoreGroup()
-      return
-    }
-    if (!highlightedGroup) { restoreGroup(); return }
-
-    for (const node of graphData.nodes) {
-      const obj = (node as Graph3DNode & { __threeObj?: THREE.Object3D }).__threeObj
-      if (!obj) continue
-
-      const isInGroup = highlightedGroup.has(node.id)
-      const targetOpacity = isInGroup ? 1.0 : 0.08
-
-      obj.traverse((child) => {
-        if (child instanceof THREE.Sprite && child.material) {
-          if (!gDirty.has(child)) { gDirty.set(child, saveSprite(child)) }
-          ;(child.material as THREE.SpriteMaterial).opacity = targetOpacity
-          ;(child.material as THREE.SpriteMaterial).needsUpdate = true
-        }
-      })
-
-      // Subtle scale bump for group members
-      if (!gScaled.has(obj)) { gScaled.set(obj, obj.scale.clone()) }
-      obj.scale.setScalar(isInGroup ? 1.3 : 0.6)
-    }
-  }, [highlightedGroup, legendHoveredType, hoveredProjectSlug, graphData.nodes, activationPhase])
+  }, [legendHoveredType, hoveredProjectSlug, highlightedGroup, graphData.nodes, activationPhase])
 
   // ── Spreading Activation — zoom camera to activated cluster ──────────────
   const prevActivationPhaseRef = useRef<string>('idle')
