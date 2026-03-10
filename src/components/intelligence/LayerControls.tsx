@@ -54,6 +54,8 @@ interface LayerControlsProps {
   activeProjectFilters?: Set<string>
   onToggleProjectFilter?: (slug: string) => void
   onClearProjectFilters?: () => void
+  /** Hover a project slug to highlight its nodes in the 3D graph */
+  onHoverProject?: (slug: string | null) => void
 }
 
 function LayerControlsComponent({
@@ -66,6 +68,7 @@ function LayerControlsComponent({
   activeProjectFilters,
   onToggleProjectFilter,
   onClearProjectFilters,
+  onHoverProject,
 }: LayerControlsProps) {
   const [heatmapEnabled, setHeatmapEnabled] = useAtom(energyHeatmapAtom)
   const [touchesEnabled, setTouchesEnabled] = useAtom(touchesHeatmapAtom)
@@ -157,6 +160,8 @@ function LayerControlsComponent({
               <button
                 key={p.slug}
                 onClick={() => onToggleProjectFilter(p.slug)}
+                onMouseEnter={() => onHoverProject?.(p.slug)}
+                onMouseLeave={() => onHoverProject?.(null)}
                 className={`flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium transition-all whitespace-nowrap ${
                   isActive
                     ? 'bg-slate-700/70 text-white ring-1 ring-slate-500/50'

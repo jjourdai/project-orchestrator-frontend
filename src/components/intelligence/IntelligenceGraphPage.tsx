@@ -9,7 +9,6 @@ import { useGraphWebSocket } from './useGraphWebSocket'
 import { useProtocolRunEvents } from './useProtocolRunEvents'
 import { NodeInspector } from './NodeInspector'
 import { LayerControls } from './LayerControls'
-import { LiveIndicator } from './LiveIndicator'
 import { SpreadingActivation, activationSearchOpenAtom } from './SpreadingActivation'
 import { GraphLoadingProgress } from './GraphLoadingProgress'
 import { ENTITY_COLORS } from '@/constants/intelligence'
@@ -90,7 +89,7 @@ export default function IntelligenceGraphPage(props: IntelligenceGraphPageProps)
   } = useIntelligenceGraph(projectSlug)
 
   // Real-time WebSocket updates
-  const { connected: wsConnected, lastEventAt } = useGraphWebSocket(projectSlug)
+  useGraphWebSocket(projectSlug)
   // Protocol run events — update runStatus overlay on ProtocolNodes
   useProtocolRunEvents()
 
@@ -211,11 +210,6 @@ export default function IntelligenceGraphPage(props: IntelligenceGraphPageProps)
           {inspectorCollapsed ? 'Details' : ''}
         </button>
       )}
-
-      {/* Live indicator (top-right) */}
-      <div className="absolute top-3 right-3 z-40">
-        <LiveIndicator connected={wsConnected} lastEventAt={lastEventAt} />
-      </div>
 
       {/* Controls (bottom-right): brightness slider stacked above fullscreen */}
       <div className="absolute bottom-3 right-3 z-40 flex flex-col items-center gap-1.5">
