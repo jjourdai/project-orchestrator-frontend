@@ -1033,11 +1033,61 @@ export interface PaginatedResponse<T> {
   has_more?: boolean
 }
 
+/** Individual step in a dependency graph node */
+export interface DependencyGraphStep {
+  id: string
+  order: number
+  description: string
+  status: string  // "Pending" | "InProgress" | "Completed" | "Skipped"
+  verification?: string
+}
+
+/** Discussed file in chat sessions linked to a task */
+export interface DiscussedFile {
+  file_path: string
+  mention_count: number
+}
+
+/** Feature graph summary for dependency graph response */
+export interface FeatureGraphSummary {
+  id: string
+  name: string
+  entity_count: number
+}
+
 export interface DependencyGraphNode {
   id: string
   title?: string
   status: TaskStatus
   priority?: number
+  tags?: string[]
+  affected_files?: string[]
+  assigned_to?: string
+  acceptance_criteria?: string[]
+  /** Number of steps for this task */
+  step_count?: number
+  /** Number of completed steps */
+  completed_step_count?: number
+  /** Number of notes linked to this task */
+  note_count?: number
+  /** Number of decisions linked to this task */
+  decision_count?: number
+  /** Individual step details */
+  steps?: DependencyGraphStep[]
+  /** Step count (legacy alias for backward compat) */
+  stepCount?: number
+  /** Completed step count (legacy alias) */
+  completedStepCount?: number
+  /** Assigned to (legacy alias) */
+  assignedTo?: string
+  /** Number of chat sessions linked to this task */
+  session_count?: number
+  /** Number of currently active (streaming) sessions */
+  active_session_count?: number
+  /** Total child sessions (sub-discussions) */
+  child_session_count?: number
+  /** Files discussed in linked chat sessions */
+  discussed_files?: DiscussedFile[]
 }
 
 export interface DependencyGraphEdge {
@@ -1045,9 +1095,19 @@ export interface DependencyGraphEdge {
   to: string
 }
 
+export interface FileConflict {
+  task_a: string
+  task_b: string
+  shared_files: string[]
+}
+
 export interface DependencyGraph {
   nodes: DependencyGraphNode[]
   edges: DependencyGraphEdge[]
+  /** File conflicts between tasks */
+  conflicts?: FileConflict[]
+  /** Feature graphs linked to the plan's project */
+  feature_graphs?: FeatureGraphSummary[]
 }
 
 // ============================================================================
@@ -1068,12 +1128,6 @@ export interface Wave {
   tasks: WaveTask[]
   task_count: number
   split_from_conflicts: boolean
-}
-
-export interface FileConflict {
-  task_a: string
-  task_b: string
-  shared_files: string[]
 }
 
 export interface WaveSummary {

@@ -45,6 +45,14 @@ function getDagreWorker(): Worker {
   return sharedWorker
 }
 
+/** Terminate the shared worker to free resources (called on unmount) */
+function terminateDagreWorker(): void {
+  if (sharedWorker) {
+    sharedWorker.terminate()
+    sharedWorker = null
+  }
+}
+
 function serializeForWorker(nodes: IntelligenceNode[]) {
   return nodes.map((node) => {
     const entityType = (node.data as { entityType?: string }).entityType ?? 'file'
@@ -283,6 +291,16 @@ export function useWorkspaceIntelligenceGraph(workspaceSlug: string | undefined)
       fetchGraphForLayers(layers, nodeLimit, 'fetch_data')
     }
     fetchSummary()
+
+    // Cleanup on unmount or slug change: free atom memory + terminate worker
+    return () => {
+      setNodes([])
+      setEdges([])
+      setSummary(null)
+      setCommunities([])
+      setStages([])
+      terminateDagreWorker()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only on slug change
   }, [workspaceSlug])
 

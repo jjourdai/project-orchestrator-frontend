@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { Maximize, Minimize, PanelRightClose, PanelRightOpen, Search } from 'lucide-react'
+import { Maximize, Minimize, PanelRightClose, PanelRightOpen, Search, Sun } from 'lucide-react'
 
 import { useWorkspaceIntelligenceGraph } from './useWorkspaceIntelligenceGraph'
 import { NodeInspector } from './NodeInspector'
@@ -15,9 +15,11 @@ import {
   selectedNodeIdAtom,
   legendHoveredTypeAtom,
   hoveredProjectSlugAtom,
+  graphBrightnessAtom,
 } from '@/atoms/intelligence'
 import { ErrorState } from '@/components/ui/ErrorState'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { Graph3DErrorBoundary } from '@/components/ui/Graph3DErrorBoundary'
 import type { IntelligenceLayer } from '@/types/intelligence'
 
 // ── Entity legend ──────────────────────────────────────────────────────────
@@ -70,6 +72,7 @@ export default function WorkspaceGraphPage({ workspaceSlug, embedded }: Workspac
   const selectedNodeId = useAtomValue(selectedNodeIdAtom)
   const setLegendHoveredType = useSetAtom(legendHoveredTypeAtom)
   const setHoveredProjectSlug = useSetAtom(hoveredProjectSlugAtom)
+  const [graphBrightness, setGraphBrightness] = useAtom(graphBrightnessAtom)
 
   const {
     nodes: layoutedNodes,
@@ -161,16 +164,18 @@ export default function WorkspaceGraphPage({ workspaceSlug, embedded }: Workspac
       <SpreadingActivation projectSlug={undefined} />
 
       {/* ── Canvas: 3D only ────────────────────────────────────────────── */}
-      <Suspense fallback={
-        <div className="absolute inset-0 flex items-center justify-center bg-slate-950">
-          <div className="text-slate-500 text-sm flex items-center gap-2">
-            <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-            Loading 3D engine...
+      <Graph3DErrorBoundary context="Workspace Graph">
+        <Suspense fallback={
+          <div className="absolute inset-0 flex items-center justify-center bg-slate-950">
+            <div className="text-slate-500 text-sm flex items-center gap-2">
+              <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+              Loading 3D engine...
+            </div>
           </div>
-        </div>
-      }>
-        <IntelligenceGraph3D nodes={layoutedNodes} edges={edges} />
-      </Suspense>
+        }>
+          <IntelligenceGraph3D nodes={layoutedNodes} edges={edges} />
+        </Suspense>
+      </Graph3DErrorBoundary>
 
       {/* ── Overlay states ── */}
       {showError && (
@@ -208,11 +213,35 @@ export default function WorkspaceGraphPage({ workspaceSlug, embedded }: Workspac
         </button>
       )}
 
-      {/* Fullscreen toggle (bottom-right) */}
-      <div className="absolute bottom-3 right-3 z-40 flex items-center gap-1 bg-slate-800/90 backdrop-blur-sm rounded-lg border border-slate-700 p-0.5">
+      {/* Controls toolbar (bottom-right): brightness slider + fullscreen */}
+      <div className="absolute bottom-3 right-3 z-40 flex flex-col items-center gap-1.5 bg-slate-800/90 backdrop-blur-sm rounded-lg border border-slate-700 p-1">
+        {/* Brightness icon */}
+        <Sun size={11} className="text-slate-500 shrink-0" />
+        {/* Vertical range slider */}
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.05}
+          value={graphBrightness}
+          onChange={(e) => setGraphBrightness(parseFloat(e.target.value))}
+          className="graph-brightness-slider"
+          title={`Brightness: ${Math.round(graphBrightness * 100)}%`}
+          style={{
+            writingMode: 'vertical-lr',
+            direction: 'rtl',
+            width: '14px',
+            height: '80px',
+            appearance: 'none',
+            WebkitAppearance: 'none',
+            background: 'transparent',
+            cursor: 'pointer',
+          }}
+        />
+        {/* Fullscreen toggle */}
         <button
           onClick={toggleFullscreen}
-          className="flex items-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-700/50 transition-colors"
+          className="flex items-center justify-center w-7 h-7 rounded-md text-slate-400 hover:text-slate-200 hover:bg-slate-700/50 transition-colors"
           title={isFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'}
         >
           {isFullscreen ? <Minimize size={13} /> : <Maximize size={13} />}

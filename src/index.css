@@ -334,6 +334,36 @@ html.tauri * {
   border-radius: 0 !important;
 }
 
+/* ─── Graph Brightness Slider ─────────────────────────────────────────── */
+.graph-brightness-slider::-webkit-slider-runnable-track {
+  width: 4px;
+  background: linear-gradient(to top, #1e293b, #64748b);
+  border-radius: 2px;
+}
+.graph-brightness-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #e2e8f0;
+  border: 2px solid #475569;
+  cursor: pointer;
+  margin-left: -4px;
+}
+.graph-brightness-slider::-moz-range-track {
+  width: 4px;
+  background: linear-gradient(to top, #1e293b, #64748b);
+  border-radius: 2px;
+}
+.graph-brightness-slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #e2e8f0;
+  border: 2px solid #475569;
+  cursor: pointer;
+}
+
 /* Backdrop — subtle darkening behind popovers */
 .popover-dropdown::backdrop {
   background: transparent;

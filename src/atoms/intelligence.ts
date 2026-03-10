@@ -93,6 +93,10 @@ export const selectedNodeAtom = atom<IntelligenceNode | null>((get) => {
 /** Hovered node ID (for highlights) */
 export const hoveredNodeIdAtom = atom<string | null>(null)
 
+/** Highlighted group of node IDs — dims everything outside the group.
+ *  Used by FG chip hover, milestone hover, etc. */
+export const highlightedGroupAtom = atom<Set<string> | null>(null)
+
 // ── Summary ──────────────────────────────────────────────────────────────────
 
 /** Intelligence summary from backend */
@@ -182,6 +186,9 @@ export const coChangeThresholdAtom = atom<number>(1)
 
 /** Community hulls toggle — show/hide convex hull overlays in 3D view */
 export const showCommunityHullsAtom = atom<boolean>(false)
+
+/** Graph brightness (0→1) — controls ambient light intensity + background luminance */
+export const graphBrightnessAtom = atom<number>(0.5)
 
 /** Communities from the backend graph response */
 export const intelligenceCommunitiesAtom = atom<BackendGraphCommunity[]>([])

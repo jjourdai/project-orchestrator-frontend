@@ -1,7 +1,9 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, lazy, Suspense } from 'react'
 import { useParams, Link, useLocation } from 'react-router-dom'
 import { useAtomValue } from 'jotai'
 import { ClipboardList, FolderKanban, GitCommitHorizontal, Pencil } from 'lucide-react'
+
+const TaskUniverse3D = lazy(() => import('@/components/tasks/TaskUniverse3D'))
 import { Card, CardHeader, CardTitle, CardContent, LoadingPage, ErrorState, Badge, Button, ConfirmDialog, FormDialog, LinkEntityDialog, TaskStatusBadge, InteractiveStepStatusBadge, InteractiveDecisionStatusBadge, ProgressBar, PageHeader, StatusSelect, SectionNav } from '@/components/ui'
 import type { ParentLink } from '@/components/ui/PageHeader'
 import { tasksApi, plansApi, projectsApi, decisionsApi } from '@/services'
@@ -54,6 +56,7 @@ export function TaskDetailPage() {
   const [blocking, setBlocking] = useState<Task[]>([])
   const [commits, setCommits] = useState<Commit[]>([])
   const [commitShaInput, setCommitShaInput] = useState('')
+  const [show3D, setShow3D] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -288,7 +291,17 @@ export function TaskDetailPage() {
           ...(task.estimated_complexity ? [{ label: 'Est. complexity', value: String(task.estimated_complexity) }] : []),
           ...(task.actual_complexity ? [{ label: 'Actual complexity', value: String(task.actual_complexity) }] : []),
         ]}
+        actions={
+          tags.length > 0 ? (
+            <div className="flex flex-wrap gap-1">
+              {tags.map((tag, index) => (
+                <Badge key={`${tag}-${index}`}>{tag}</Badge>
+              ))}
+            </div>
+          ) : undefined
+        }
         overflowActions={[
+          { label: '3D View', onClick: () => setShow3D(true) },
           { label: 'Edit', onClick: () => editTaskDialog.open({ title: 'Edit Task' }) },
           { label: 'Delete', variant: 'danger', onClick: () => confirmDialog.open({
             title: 'Delete Task',
@@ -304,15 +317,7 @@ export function TaskDetailPage() {
             }
           }) }
         ]}
-      >
-        {tags.length > 0 && (
-          <div className="flex flex-wrap gap-1">
-            {tags.map((tag, index) => (
-              <Badge key={`${tag}-${index}`}>{tag}</Badge>
-            ))}
-          </div>
-        )}
-      </PageHeader>
+      />
 
       <SectionNav sections={sections} activeSection={activeSection} />
 
@@ -579,6 +584,17 @@ export function TaskDetailPage() {
       </FormDialog>
       <LinkEntityDialog {...linkDialog.dialogProps} />
       <ConfirmDialog {...confirmDialog.dialogProps} />
+
+      {/* 3D Universe View */}
+      {show3D && taskId && (
+        <Suspense fallback={
+          <div className="fixed inset-0 z-50 bg-[#0a0a0f] flex items-center justify-center">
+            <div className="text-gray-400 animate-pulse text-lg">Loading 3D engine...</div>
+          </div>
+        }>
+          <TaskUniverse3D taskId={taskId} onClose={() => setShow3D(false)} />
+        </Suspense>
+      )}
     </div>
   )
 }

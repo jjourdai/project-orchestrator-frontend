@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useSetAtom, useAtomValue } from 'jotai'
-import { ChevronsUpDown, ChevronRight, Flag, FolderKanban, GitCommitHorizontal, Layers } from 'lucide-react'
+import React from 'react'
+import { ChevronsUpDown, ChevronRight, Flag, FolderKanban, GitCommitHorizontal, Layers, Box } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardContent, LoadingPage, ErrorState, Badge, Button, ConfirmDialog, FormDialog, LinkEntityDialog, LinkedEntityBadge, InteractiveTaskStatusBadge, InteractiveDecisionStatusBadge, ViewToggle, PageHeader, StatusSelect, SectionNav } from '@/components/ui'
 import type { ParentLink } from '@/components/ui/PageHeader'
 import { plansApi, tasksApi, projectsApi, workspacesApi, decisionsApi } from '@/services'
@@ -12,6 +13,8 @@ import { chatSuggestedProjectIdAtom, planRefreshAtom, taskRefreshAtom, projectRe
 import { CreateTaskForm, CreateConstraintForm, EditPlanForm } from '@/components/forms'
 import { DependencyGraphView } from '@/components/DependencyGraphView'
 import { WaveView } from '@/components/plans/WaveView'
+
+const PlanUniverse3D = React.lazy(() => import('@/components/plans/PlanUniverse3D'))
 import { CommitList } from '@/components/commits'
 import type { Plan, Decision, DecisionStatus, DependencyGraph, WaveComputationResult, Task, Constraint, Step, Commit, PlanStatus, TaskStatus, StepStatus, PaginatedResponse, Project } from '@/types'
 import type { KanbanTask } from '@/components/kanban'
@@ -53,7 +56,7 @@ export function PlanDetailPage() {
   const [linkedMilestones, setLinkedMilestones] = useState<Array<{ id: string; title: string; href: string; type: 'workspace' | 'project' }>>([])
   const [waves, setWaves] = useState<WaveComputationResult | null>(null)
   const [wavesLoading, setWavesLoading] = useState(false)
-  const [graphViewMode, setGraphViewMode] = useState<'dag' | 'waves'>('dag')
+  const [graphViewMode, setGraphViewMode] = useState<'dag' | 'waves' | '3d'>('dag')
 
   const fetchWaves = useCallback(async () => {
     if (!planId) return
@@ -415,50 +418,67 @@ export function PlanDetailPage() {
           <CardHeader>
             <div className="flex items-center justify-between w-full">
               <div className="flex items-center gap-3">
-                <CardTitle>{graphViewMode === 'waves' ? 'Execution Waves' : 'Dependency Graph'}</CardTitle>
-                {/* Toggle DAG / Waves */}
-                <div className="flex items-center rounded-lg bg-white/[0.06] p-0.5">
-                  <button
-                    onClick={() => setGraphViewMode('dag')}
-                    className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
-                      graphViewMode === 'dag'
-                        ? 'bg-white/[0.1] text-gray-200 font-medium'
-                        : 'text-gray-500 hover:text-gray-400'
-                    }`}
-                  >
-                    DAG
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (!waves) {
-                        fetchWaves()
-                      } else {
-                        setGraphViewMode('waves')
-                      }
-                    }}
-                    disabled={wavesLoading}
-                    className={`px-2.5 py-1 text-xs rounded-md transition-colors flex items-center gap-1.5 ${
-                      graphViewMode === 'waves'
-                        ? 'bg-white/[0.1] text-gray-200 font-medium'
-                        : 'text-gray-500 hover:text-gray-400'
-                    } ${wavesLoading ? 'opacity-50' : ''}`}
-                  >
-                    <Layers className="w-3 h-3" />
-                    {wavesLoading ? 'Computing...' : 'Waves'}
-                  </button>
-                </div>
+                <CardTitle>{graphViewMode === 'waves' ? 'Execution Waves' : graphViewMode === '3d' ? '3D Universe' : 'Dependency Graph'}</CardTitle>
+                <span className="text-sm text-gray-500">
+                  {graphViewMode === 'waves' && waves
+                    ? `${waves.summary.total_waves} waves · ${waves.summary.total_tasks} tasks`
+                    : graphViewMode === '3d'
+                    ? `${(graph.nodes || []).length} nodes`
+                    : `${(graph.nodes || []).length} tasks · ${(graph.edges || []).length} deps`
+                  }
+                </span>
               </div>
-              <span className="text-sm text-gray-500">
-                {graphViewMode === 'waves' && waves
-                  ? `${waves.summary.total_waves} waves · ${waves.summary.total_tasks} tasks`
-                  : `${(graph.nodes || []).length} tasks · ${(graph.edges || []).length} dependencies`
-                }
-              </span>
+              {/* Toggle DAG / Waves / 3D */}
+              <div className="flex items-center rounded-lg bg-gray-800/60 border border-gray-700/50 p-0.5">
+                <button
+                  onClick={() => setGraphViewMode('dag')}
+                  className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
+                    graphViewMode === 'dag'
+                      ? 'bg-indigo-600 text-white font-medium shadow-sm'
+                      : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'
+                  }`}
+                >
+                  DAG
+                </button>
+                <button
+                  onClick={() => {
+                    if (!waves) {
+                      fetchWaves()
+                    } else {
+                      setGraphViewMode('waves')
+                    }
+                  }}
+                  disabled={wavesLoading}
+                  className={`px-2.5 py-1 text-xs rounded-md transition-colors flex items-center gap-1.5 ${
+                    graphViewMode === 'waves'
+                      ? 'bg-indigo-600 text-white font-medium shadow-sm'
+                      : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'
+                  } ${wavesLoading ? 'opacity-50' : ''}`}
+                >
+                  <Layers className="w-3 h-3" />
+                  {wavesLoading ? 'Computing...' : 'Waves'}
+                </button>
+                <button
+                  onClick={() => setGraphViewMode('3d')}
+                  className={`px-2.5 py-1 text-xs rounded-md transition-colors flex items-center gap-1.5 ${
+                    graphViewMode === '3d'
+                      ? 'bg-indigo-600 text-white font-medium shadow-sm'
+                      : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'
+                  }`}
+                >
+                  <Box className="w-3 h-3" />
+                  3D
+                </button>
+              </div>
             </div>
           </CardHeader>
           <CardContent>
-            {graphViewMode === 'waves' && waves ? (
-              <WaveView data={waves} taskStatuses={taskStatusMap} />
+            {graphViewMode === '3d' ? (
+              <React.Suspense fallback={<div className="flex items-center justify-center h-[400px]"><div className="text-gray-400 animate-pulse text-sm">Loading 3D...</div></div>}>
+                <PlanUniverse3D planId={plan.id} planTitle={plan.title} projectSlug={linkedProject?.slug} />
+              </React.Suspense>
+            ) : graphViewMode === 'waves' && waves ? (
+              <WaveView data={waves} taskStatuses={taskStatusMap} planId={plan.id} planStatus={plan.status} />
             ) : (
               <DependencyGraphView graph={graph} taskStatuses={taskStatusMap} />
             )}

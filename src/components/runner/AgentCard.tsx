@@ -5,7 +5,8 @@
  * cost ($X.XX), and a button to open the live conversation panel.
  */
 
-import { Eye } from 'lucide-react'
+import { useState } from 'react'
+import { Eye, ChevronDown, ChevronUp } from 'lucide-react'
 import type { ActiveAgentSnapshot, AgentStatus } from '@/services/runner'
 
 // ---------------------------------------------------------------------------
@@ -43,10 +44,13 @@ interface AgentCardProps {
   /** Whether this card is currently selected (conversation open) */
   isSelected?: boolean
   onViewConversation: (sessionId: string) => void
+  /** Optional expandable detail content (e.g. AgentExecutionDetail) */
+  detailContent?: React.ReactNode
 }
 
-export function AgentCard({ agent, isSelected, onViewConversation }: AgentCardProps) {
+export function AgentCard({ agent, isSelected, onViewConversation, detailContent }: AgentCardProps) {
   const cfg = statusConfig[agent.status] ?? statusConfig.running
+  const [detailOpen, setDetailOpen] = useState(false)
 
   return (
     <div
@@ -77,21 +81,39 @@ export function AgentCard({ agent, isSelected, onViewConversation }: AgentCardPr
         <span className="font-mono tabular-nums">{formatCost(agent.cost_usd)}</span>
       </div>
 
-      {/* Action */}
-      <button
-        onClick={() => onViewConversation(agent.session_id)}
-        className={`
-          w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium
-          transition-colors cursor-pointer
-          ${isSelected
-            ? 'bg-indigo-500/20 text-indigo-300'
-            : 'bg-white/[0.06] text-gray-400 hover:bg-white/[0.1] hover:text-gray-200'
-          }
-        `}
-      >
-        <Eye className="w-3.5 h-3.5" />
-        {isSelected ? 'Viewing' : 'View conversation'}
-      </button>
+      {/* Actions row */}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => onViewConversation(agent.session_id)}
+          className={`
+            flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium
+            transition-colors cursor-pointer
+            ${isSelected
+              ? 'bg-indigo-500/20 text-indigo-300'
+              : 'bg-white/[0.06] text-gray-400 hover:bg-white/[0.1] hover:text-gray-200'
+            }
+          `}
+        >
+          <Eye className="w-3.5 h-3.5" />
+          {isSelected ? 'Viewing' : 'View conversation'}
+        </button>
+        {detailContent && (
+          <button
+            onClick={() => setDetailOpen(!detailOpen)}
+            className="flex items-center justify-center p-1.5 rounded-md text-xs text-gray-500 bg-white/[0.06] hover:bg-white/[0.1] hover:text-gray-300 transition-colors cursor-pointer"
+            title={detailOpen ? 'Hide details' : 'Show details'}
+          >
+            {detailOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+          </button>
+        )}
+      </div>
+
+      {/* Expandable detail */}
+      {detailOpen && detailContent && (
+        <div className="mt-3 pt-3 border-t border-white/[0.06]">
+          {detailContent}
+        </div>
+      )}
     </div>
   )
 }

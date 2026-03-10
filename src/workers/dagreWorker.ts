@@ -214,9 +214,10 @@ function packComponents(results: ComponentResult[]): Map<string, { x: number; y:
 // ── Worker message handler ──────────────────────────────────────────────────
 
 self.onmessage = (event: MessageEvent<LayoutRequest>) => {
+  try {
   const { nodes, edges, nodesep = 40, ranksep = 60 } = event.data
 
-  if (nodes.length === 0) {
+  if (!nodes || nodes.length === 0) {
     self.postMessage({ type: 'result', nodes: [], components: 0 } satisfies LayoutResult)
     return
   }
@@ -277,4 +278,14 @@ self.onmessage = (event: MessageEvent<LayoutRequest>) => {
     nodes: resultNodes,
     components: total,
   } satisfies LayoutResult)
+
+  } catch (err) {
+    console.error('[dagreWorker] Layout failed:', err)
+    // Return empty result instead of crashing the worker
+    self.postMessage({
+      type: 'result',
+      nodes: (event.data?.nodes ?? []).map((n: SerializedNode) => ({ id: n.id, x: 0, y: 0 })),
+      components: 0,
+    } satisfies LayoutResult)
+  }
 }
