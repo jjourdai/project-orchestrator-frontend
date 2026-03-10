@@ -101,10 +101,6 @@ export default function IntelligenceGraph3D({ nodes, edges }: IntelligenceGraph3
 
   const { transformToGraph3D, savePositions } = useGraph3DLayout()
 
-  // ── Hard cap: prevent WebGL OOM on very large graphs ──────────────────
-  const HARD_CAP = 2000
-  const [forceRender, setForceRender] = useState(false)
-
   // ── Community hulls ref ───────────────────────────────────────────────
   const communityHullsRef = useRef<CommunityHullGroup | null>(null)
 
@@ -1036,44 +1032,11 @@ export default function IntelligenceGraph3D({ nodes, edges }: IntelligenceGraph3
   // that can produce layout artifacts when resized later.
   const hasDimensions = dimensions.width > 0 && dimensions.height > 0
 
-  // ── Hard cap: refuse to render beyond HARD_CAP nodes unless user opts in ──
-  const nodeCount = graphData.nodes.length
-  const exceedsHardCap = nodeCount > HARD_CAP && !forceRender
+  // ── Quality-adaptive render settings ──────────────────────────────────
   const quality = getNodeQuality()
   const nodeResolution = quality === 'minimal' ? 6 : quality === 'low' ? 8 : 12
   // Disable particles for large graphs (saves draw calls)
   const enableParticles = quality !== 'minimal'
-
-  if (exceedsHardCap) {
-    return (
-      <div ref={containerRef} className="absolute inset-0 overflow-hidden bg-[#0f172a] flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4 text-center max-w-md px-6">
-          <div className="text-4xl">🛡️</div>
-          <div>
-            <h3 className="text-sm font-semibold text-slate-200 mb-1">
-              Large Graph Protection
-            </h3>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              This graph has <span className="text-white font-medium">{nodeCount.toLocaleString()}</span> nodes.
-              Rendering more than {HARD_CAP.toLocaleString()} nodes may cause WebGL to crash
-              depending on your GPU.
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setForceRender(true)}
-              className="flex items-center gap-2 px-4 py-2 text-xs font-medium rounded-lg bg-amber-600/20 border border-amber-500/40 text-amber-300 hover:bg-amber-600/30 hover:text-amber-200 transition-colors"
-            >
-              Render anyway (minimal quality)
-            </button>
-          </div>
-          <p className="text-[10px] text-slate-600">
-            Tip: use layer filters or project filters to reduce the node count.
-          </p>
-        </div>
-      </div>
-    )
-  }
 
   return (
     <div ref={containerRef} className="absolute inset-0 overflow-hidden bg-[#0f172a]">
