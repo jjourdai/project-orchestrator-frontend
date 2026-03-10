@@ -1,8 +1,8 @@
-import { useEffect, useState, useCallback, useMemo, lazy, Suspense } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useSetAtom, useAtomValue } from 'jotai'
 import React from 'react'
-import { Box, ChevronsUpDown, ChevronRight, Flag, FolderKanban, GitCommitHorizontal, Layers } from 'lucide-react'
+import { ChevronsUpDown, ChevronRight, Flag, FolderKanban, GitCommitHorizontal } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardContent, LoadingPage, ErrorState, Badge, Button, ConfirmDialog, FormDialog, LinkEntityDialog, LinkedEntityBadge, InteractiveTaskStatusBadge, InteractiveDecisionStatusBadge, ViewToggle, PageHeader, StatusSelect, SectionNav } from '@/components/ui'
 import type { ParentLink } from '@/components/ui/PageHeader'
 import { plansApi, tasksApi, projectsApi, workspacesApi, decisionsApi } from '@/services'
@@ -11,14 +11,11 @@ import { useViewMode, useConfirmDialog, useFormDialog, useLinkDialog, useToast, 
 import { workspacePath } from '@/utils/paths'
 import { chatSuggestedProjectIdAtom, planRefreshAtom, taskRefreshAtom, projectRefreshAtom } from '@/atoms'
 import { CreateTaskForm, CreateConstraintForm, EditPlanForm } from '@/components/forms'
-import { DependencyGraphView, TaskDrawer } from '@/components/DependencyGraphView'
-import { usePlanUniverse } from '@/components/universe'
-const Universe3DPanel = lazy(() => import('@/components/universe/Universe3DPanel'))
-import { WaveView } from '@/components/plans/WaveView'
-
-const PlanUniverse3D = React.lazy(() => import('@/components/plans/PlanUniverse3D'))
+import { UnifiedGraphSection } from '@/components/graph/UnifiedGraphSection'
+import { PlanGraphAdapter } from '@/adapters/PlanGraphAdapter'
+import { usePlanGraphData } from '@/hooks/usePlanGraphData'
 import { CommitList } from '@/components/commits'
-import type { Plan, Decision, DecisionStatus, DependencyGraph, WaveComputationResult, Task, Constraint, Step, Commit, PlanStatus, TaskStatus, StepStatus, PaginatedResponse, Project } from '@/types'
+import type { Plan, Decision, DecisionStatus, DependencyGraph, Task, Constraint, Step, Commit, PlanStatus, TaskStatus, StepStatus, PaginatedResponse, Project } from '@/types'
 import type { KanbanTask } from '@/components/kanban'
 
 interface DecisionWithTask extends Decision {
@@ -56,28 +53,8 @@ export function PlanDetailPage() {
   const [tasksCollapseAll, setTasksCollapseAll] = useState(0)
   const [tasksAllExpanded, setTasksAllExpanded] = useState(false)
   const [linkedMilestones, setLinkedMilestones] = useState<Array<{ id: string; title: string; href: string; type: 'workspace' | 'project' }>>([])
-  const [waves, setWaves] = useState<WaveComputationResult | null>(null)
-  const [wavesLoading, setWavesLoading] = useState(false)
-  const [graphViewMode, setGraphViewMode] = useState<'flow' | 'waves' | '3d'>('flow')
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
-  const [show3D, setShow3D] = useState(false)
-  const planUniverse = usePlanUniverse(show3D ? planId : undefined)
-
-  const fetchWaves = useCallback(async () => {
-    if (!planId) return
-    setWavesLoading(true)
-    try {
-      const result = await plansApi.getWaves(planId)
-      setWaves(result)
-      setGraphViewMode('waves')
-    } catch (error) {
-      console.error('Failed to compute waves:', error)
-      toast.error('Failed to compute waves')
-    } finally {
-      setWavesLoading(false)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- toast is stable
-  }, [planId])
+  // Plan graph data for UnifiedGraphSection (replaces inline graph section)
+  const planGraphData = usePlanGraphData(planId, plan?.title, linkedProject?.slug)
 
   const fetchData = useCallback(async () => {
     if (!planId) return
@@ -338,13 +315,7 @@ export function PlanDetailPage() {
         title={plan.title}
         parentLinks={parentLinks.length > 0 ? parentLinks : undefined}
         viewTransitionName={`plan-title-${plan.id}`}
-        description={show3D ? undefined : plan.description}
-        actions={
-          <Button size="sm" variant={show3D ? 'primary' : 'secondary'} onClick={() => setShow3D(!show3D)}>
-            <Box className="w-3.5 h-3.5 mr-1.5" />
-            {show3D ? 'Description' : '3D View'}
-          </Button>
-        }
+        description={plan.description}
         status={
           <StatusSelect
             status={plan.status}
@@ -418,28 +389,6 @@ export function PlanDetailPage() {
         </div>
       </PageHeader>
 
-      {/* Inline 3D Universe View */}
-      {show3D && planId && (
-        <Suspense fallback={
-          <div className="relative rounded-xl bg-[#0a0a0f] flex items-center justify-center" style={{ height: 500 }}>
-            <div className="text-gray-400 animate-pulse text-sm">Loading 3D engine...</div>
-          </div>
-        }>
-          <Universe3DPanel
-            nodes={planUniverse.nodes}
-            links={planUniverse.links}
-            isLoading={planUniverse.isLoading}
-            error={planUniverse.error}
-            onClose={() => setShow3D(false)}
-            centerType="plan"
-            legend={[
-              { type: 'plan', label: 'Plan (center)' },
-              { type: 'task', label: 'Tasks' },
-            ]}
-          />
-        </Suspense>
-      )}
-
       <SectionNav sections={sections} activeSection={activeSection} />
 
       {/* Task Stats */}
@@ -454,79 +403,22 @@ export function PlanDetailPage() {
 
       </section>
 
-      {/* Execution Waves / Dependency Graph */}
-      {graph && (graph.nodes || []).length > 0 && (
+      {/* Execution Waves / Dependency Graph — unified via GraphAdapter */}
+      {planGraphData.data && (planGraphData.graph?.nodes || []).length > 0 && (
         <section id="graph" className="scroll-mt-20">
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between w-full">
-              <div className="flex items-center gap-3">
-                <CardTitle>{graphViewMode === 'waves' ? 'Execution Waves' : graphViewMode === '3d' ? '3D Universe' : 'Task Flow'}</CardTitle>
-                <span className="text-sm text-gray-500">
-                  {graphViewMode === 'waves' && waves
-                    ? `${waves.summary.total_waves} waves · ${waves.summary.total_tasks} tasks`
-                    : graphViewMode === '3d'
-                    ? `${(graph.nodes || []).length} nodes`
-                    : `${(graph.nodes || []).length} tasks · ${(graph.edges || []).length} deps`
-                  }
-                </span>
-              </div>
-              {/* Toggle Flow / Waves / 3D */}
-              <div className="flex items-center rounded-lg bg-gray-800/60 border border-gray-700/50 p-0.5">
-                <button
-                  onClick={() => setGraphViewMode('flow')}
-                  className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
-                    graphViewMode === 'flow'
-                      ? 'bg-indigo-600 text-white font-medium shadow-sm'
-                      : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'
-                  }`}
-                >
-                  Flow
-                </button>
-                <button
-                  onClick={() => {
-                    if (!waves) {
-                      fetchWaves()
-                    } else {
-                      setGraphViewMode('waves')
-                    }
-                  }}
-                  disabled={wavesLoading}
-                  className={`px-2.5 py-1 text-xs rounded-md transition-colors flex items-center gap-1.5 ${
-                    graphViewMode === 'waves'
-                      ? 'bg-indigo-600 text-white font-medium shadow-sm'
-                      : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'
-                  } ${wavesLoading ? 'opacity-50' : ''}`}
-                >
-                  <Layers className="w-3 h-3" />
-                  {wavesLoading ? 'Computing...' : 'Waves'}
-                </button>
-                <button
-                  onClick={() => setGraphViewMode('3d')}
-                  className={`px-2.5 py-1 text-xs rounded-md transition-colors flex items-center gap-1.5 ${
-                    graphViewMode === '3d'
-                      ? 'bg-indigo-600 text-white font-medium shadow-sm'
-                      : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'
-                  }`}
-                >
-                  <Box className="w-3 h-3" />
-                  3D
-                </button>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            {graphViewMode === '3d' ? (
-              <React.Suspense fallback={<div className="flex items-center justify-center h-[400px]"><div className="text-gray-400 animate-pulse text-sm">Loading 3D...</div></div>}>
-                <PlanUniverse3D planId={plan.id} planTitle={plan.title} projectSlug={linkedProject?.slug} />
-              </React.Suspense>
-            ) : graphViewMode === 'waves' && waves ? (
-              <WaveView data={waves} taskStatuses={taskStatusMap} planId={plan.id} planStatus={plan.status} />
-            ) : (
-              <DependencyGraphView graph={graph} taskStatuses={taskStatusMap} onNodeSelect={setSelectedTaskId} />
-            )}
-          </CardContent>
-        </Card>
+          <UnifiedGraphSection
+            adapter={PlanGraphAdapter}
+            data={planGraphData.data}
+            graph={planGraphData.graph}
+            taskStatuses={taskStatusMap}
+            waves={planGraphData.waves}
+            fetchWaves={planGraphData.fetchWaves}
+            wavesLoading={planGraphData.wavesLoading}
+            planId={plan.id}
+            planStatus={plan.status}
+            availableViews={['dag', 'waves', '3d']}
+            defaultView="dag"
+          />
         </section>
       )}
 
@@ -740,17 +632,6 @@ export function PlanDetailPage() {
       <LinkEntityDialog {...linkDialog.dialogProps} />
       <ConfirmDialog {...confirmDialog.dialogProps} />
 
-      {/* Task Drawer — triggered from DependencyGraphView node click */}
-      {selectedTaskId && (
-        <TaskDrawer
-          taskId={selectedTaskId}
-          onClose={() => setSelectedTaskId(null)}
-          onOpenFullPage={(taskId) => {
-            setSelectedTaskId(null)
-            navigate(workspacePath(wsSlug, `/tasks/${taskId}`), { type: 'card-click' })
-          }}
-        />
-      )}
     </div>
   )
 }
