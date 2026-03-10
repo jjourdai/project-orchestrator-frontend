@@ -1,13 +1,22 @@
 // ============================================================================
-// 3D Node Objects — Custom Three.js shapes per entity type
+// 3D Node Objects — Emoji-centric design with colored ring + circular label
 // ============================================================================
 //
-// Each entity type gets a distinctive 3D shape + emoji + billboard label.
-// Energy is reflected in: shape size, glow intensity, emissive brightness.
+// Each entity is represented by its EMOJI as the primary visual element.
+// No 3D mesh shapes — the emoji IS the node.
 //
-// IMPORTANT: Geometries and materials are cached/shared to avoid creating
-// hundreds of unique WebGL shader programs which exhausts the GL context
-// and causes VALIDATE_STATUS false errors + render loops.
+// Visual hierarchy:
+//   1. Single billboard sprite combining: colored ring border + circular name
+//      (+ optional subtitle on a second inner/top arc for chat_session nodes)
+//   2. Emoji (center, billboard sprite) — scaled by energy
+//   3. Subtle glow halo (high energy only)
+//
+// Everything is billboard sprites so all elements share the same orientation
+// (always facing the camera). This fixes the axis alignment issue between
+// the ring and the emoji/text.
+//
+// IMPORTANT: Canvas textures are cached by (entityType + label + subtitle + energyBucket)
+// to avoid creating unique textures per node when possible.
 // ============================================================================
 
 import * as THREE from 'three'
@@ -22,120 +31,206 @@ type SpriteTextInstance = SpriteText & THREE.Object3D
 
 const ENTITY_EMOJIS: Record<string, string> = {
   // Code layer
-  file: '📄',
-  function: '⚡',
-  struct: '🏗️',
-  trait: '🧬',
-  enum: '📋',
+  file: '\u{1F4C4}',
+  function: '\u26A1',
+  struct: '\u{1F3D7}\uFE0F',
+  trait: '\u{1F9EC}',
+  enum: '\u{1F4CB}',
   // PM layer
-  plan: '🎯',
-  task: '✅',
-  step: '👣',
-  milestone: '🏁',
-  release: '🚀',
-  commit: '💾',
+  plan: '\u{1F3AF}',
+  task: '\u2705',
+  step: '\u{1F463}',
+  milestone: '\u{1F3C1}',
+  release: '\u{1F680}',
+  commit: '\u{1F4BE}',
   // Knowledge layer
-  note: '📝',
-  decision: '⚖️',
-  constraint: '🛡️',
+  note: '\u{1F4DD}',
+  decision: '\u2696\uFE0F',
+  constraint: '\u{1F6E1}\uFE0F',
   // Skills layer
-  skill: '🧠',
+  skill: '\u{1F9E0}',
   // Behavioral layer
-  protocol: '🔄',
-  protocol_state: '⭕',
+  protocol: '\u{1F504}',
+  protocol_state: '\u2B55',
   // Chat layer
-  chat_session: '💬',
+  chat_session: '\u{1F4AC}',
   // Feature graph
-  feature_graph: '🔮',
+  feature_graph: '\u{1F52E}',
 }
 
-// ── Cached geometries (one per entity type) ────────────────────────────────────
+// ── Helper: draw text along a circular arc ──────────────────────────────────
 
-const geometryCache = new Map<string, THREE.BufferGeometry>()
+function drawTextOnArc(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  cx: number,
+  cy: number,
+  radius: number,
+  fontSize: number,
+  fillColor: string,
+  alpha: number,
+  /** Center angle of the arc (radians). PI/2 = bottom, -PI/2 = top */
+  centerAngle: number,
+  /** If true, characters are flipped so text reads correctly on the top arc */
+  flipForTop: boolean,
+) {
+  ctx.font = `bold ${fontSize}px Inter, system-ui, sans-serif`
+  ctx.fillStyle = fillColor
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
 
-const SHAPE_FACTORIES: Record<string, () => THREE.BufferGeometry> = {
-  // Code layer
-  file: () => new THREE.SphereGeometry(5, 16, 12),
-  function: () => new THREE.IcosahedronGeometry(3.5, 0),
-  struct: () => new THREE.BoxGeometry(7, 7, 7),
-  trait: () => new THREE.OctahedronGeometry(4, 0),
-  enum: () => new THREE.ConeGeometry(3, 6, 6),
-  // PM layer
-  plan: () => new THREE.CylinderGeometry(5, 5, 3, 8),
-  task: () => new THREE.BoxGeometry(6, 6, 6),
-  step: () => new THREE.SphereGeometry(2, 8, 6),
-  milestone: () => new THREE.DodecahedronGeometry(4, 0),
-  release: () => new THREE.TorusGeometry(3.5, 1, 8, 12),
-  commit: () => new THREE.SphereGeometry(2.5, 8, 6),
-  // Knowledge layer
-  note: () => new THREE.OctahedronGeometry(4.5, 0),
-  decision: () => new THREE.TetrahedronGeometry(5, 0),
-  constraint: () => new THREE.CylinderGeometry(2, 4, 6, 6),
-  // Skills layer
-  skill: () => new THREE.TorusGeometry(5, 2, 12, 16),
-  // Behavioral layer
-  protocol: () => new THREE.CylinderGeometry(4, 4, 8, 6),        // hexagonal prism — FSM
-  protocol_state: () => new THREE.SphereGeometry(3.5, 12, 8),     // smooth sphere — state
-  // Chat layer
-  chat_session: () => new THREE.CapsuleGeometry(3, 4, 8, 12),     // capsule — chat bubble
-  // Feature graph (code overlay)
-  feature_graph: () => new THREE.DodecahedronGeometry(5, 0),      // dodecahedron — cluster
-}
-
-function getGeometry(entityType: string): THREE.BufferGeometry {
-  let geo = geometryCache.get(entityType)
-  if (!geo) {
-    const factory = SHAPE_FACTORIES[entityType] ?? SHAPE_FACTORIES.file
-    geo = factory()
-    geometryCache.set(entityType, geo)
+  const chars = [...text]
+  const charWidths: number[] = []
+  let totalWidth = 0
+  for (const ch of chars) {
+    const w = ctx.measureText(ch).width
+    charWidths.push(w)
+    totalWidth += w
   }
-  return geo
+
+  const totalAngle = totalWidth / radius
+  // For bottom arc: start left, go right (decreasing angle in canvas coords)
+  // For top arc: start right, go left (increasing angle)
+  let currentAngle: number
+  if (flipForTop) {
+    currentAngle = centerAngle - totalAngle / 2
+  } else {
+    currentAngle = centerAngle + totalAngle / 2
+  }
+
+  ctx.globalAlpha = alpha
+  for (let i = 0; i < chars.length; i++) {
+    const charAngle = charWidths[i] / radius
+
+    if (flipForTop) {
+      currentAngle += charAngle / 2
+      ctx.save()
+      ctx.translate(
+        cx + radius * Math.cos(currentAngle),
+        cy + radius * Math.sin(currentAngle),
+      )
+      ctx.rotate(currentAngle + Math.PI / 2)
+      ctx.fillText(chars[i], 0, 0)
+      ctx.restore()
+      currentAngle += charAngle / 2
+    } else {
+      currentAngle -= charAngle / 2
+      ctx.save()
+      ctx.translate(
+        cx + radius * Math.cos(currentAngle),
+        cy + radius * Math.sin(currentAngle),
+      )
+      ctx.rotate(currentAngle - Math.PI / 2)
+      ctx.fillText(chars[i], 0, 0)
+      ctx.restore()
+      currentAngle -= charAngle / 2
+    }
+  }
+  ctx.globalAlpha = 1.0
 }
 
-// ── Cached materials (one per entity type) ──────────────────────────────────────
-// Using MeshLambertMaterial instead of MeshPhongMaterial — it's lighter on
-// shader programs and doesn't require specular/shininess uniforms that can
-// cause VALIDATE_STATUS errors on some GPU drivers.
+// ── Ring + circular label (single canvas billboard sprite) ────────────────────
+// Combines the colored ring border AND the name in an arc into one texture.
+// Supports an optional subtitle drawn on a second arc (top half).
 
-const materialCache = new Map<string, THREE.MeshLambertMaterial>()
+const ringLabelTextureCache = new Map<string, THREE.CanvasTexture>()
+const ringLabelMaterialCache = new Map<string, THREE.SpriteMaterial>()
 
-function getMaterial(entityType: string, color: string, energy: number): THREE.MeshLambertMaterial {
-  // 5 energy buckets for smoother visual gradation
-  const energyBucket = energy > 0.8 ? 'max' : energy > 0.6 ? 'high' : energy > 0.4 ? 'mid' : energy > 0.2 ? 'low' : 'dim'
-  const cacheKey = `${entityType}:${energyBucket}`
+function createRingLabelSprite(
+  text: string,
+  color: string,
+  energy: number,
+  subtitle?: string,
+): THREE.Sprite {
+  const maxLen = 32
+  const maxSubLen = 28
+  const displayText = text.length > maxLen ? text.slice(0, maxLen - 1) + '\u2026' : text
+  const displaySub = subtitle
+    ? (subtitle.length > maxSubLen ? subtitle.slice(0, maxSubLen - 1) + '\u2026' : subtitle)
+    : undefined
+  const opacityBucket = energy > 0.7 ? 'bright' : energy > 0.3 ? 'mid' : 'dim'
+  const cacheKey = `${displayText}:${displaySub ?? ''}:${color}:${opacityBucket}`
 
-  let mat = materialCache.get(cacheKey)
-  if (!mat) {
-    const emissiveIntensity =
-      energyBucket === 'max' ? 0.5 :
-      energyBucket === 'high' ? 0.36 :
-      energyBucket === 'mid' ? 0.24 :
-      energyBucket === 'low' ? 0.15 : 0.08
-    const opacity =
-      energyBucket === 'max' ? 1.0 :
-      energyBucket === 'high' ? 0.95 :
-      energyBucket === 'mid' ? 0.9 :
-      energyBucket === 'low' ? 0.8 : 0.6
-    mat = new THREE.MeshLambertMaterial({
-      color: new THREE.Color(color),
-      emissive: new THREE.Color(color),
-      emissiveIntensity,
+  let texture = ringLabelTextureCache.get(cacheKey)
+  if (!texture) {
+    const size = 512
+    const canvas = document.createElement('canvas')
+    canvas.width = size
+    canvas.height = size
+    const ctx = canvas.getContext('2d')!
+
+    const cx = size / 2
+    const cy = size / 2
+    const ringRadius = size * 0.36
+    const ringWidth = opacityBucket === 'bright' ? 6 : opacityBucket === 'mid' ? 5 : 3
+    const ringAlpha = opacityBucket === 'bright' ? 0.9 : opacityBucket === 'mid' ? 0.65 : 0.4
+
+    // ── Draw ring border ──
+    ctx.beginPath()
+    ctx.arc(cx, cy, ringRadius, 0, Math.PI * 2)
+    ctx.strokeStyle = color
+    ctx.globalAlpha = ringAlpha
+    ctx.lineWidth = ringWidth
+    ctx.stroke()
+    ctx.globalAlpha = 1.0
+
+    // ── Subtle filled disc behind the ring for depth ──
+    ctx.beginPath()
+    ctx.arc(cx, cy, ringRadius - ringWidth, 0, Math.PI * 2)
+    ctx.fillStyle = color
+    ctx.globalAlpha = 0.06
+    ctx.fill()
+    ctx.globalAlpha = 1.0
+
+    // ── Primary text: bottom arc (just outside the ring) ──
+    const textRadius = ringRadius + 18
+    drawTextOnArc(
+      ctx, displayText, cx, cy, textRadius,
+      28, '#e2e8f0', 0.85,
+      Math.PI / 2,  // bottom center
+      false,         // normal orientation
+    )
+
+    // ── Subtitle: top arc (just outside the ring, reads left-to-right) ──
+    if (displaySub) {
+      const subRadius = ringRadius + 16
+      drawTextOnArc(
+        ctx, displaySub, cx, cy, subRadius,
+        22, '#94a3b8', 0.6,
+        -Math.PI / 2,  // top center
+        true,           // flipped for top readability
+      )
+    }
+
+    texture = new THREE.CanvasTexture(canvas)
+    texture.needsUpdate = true
+    ringLabelTextureCache.set(cacheKey, texture)
+  }
+
+  let material = ringLabelMaterialCache.get(cacheKey)
+  if (!material) {
+    material = new THREE.SpriteMaterial({
+      map: texture,
       transparent: true,
-      opacity,
+      opacity: 1.0,
+      depthWrite: false,
     })
-    materialCache.set(cacheKey, mat)
+    ringLabelMaterialCache.set(cacheKey, material)
   }
-  return mat
+
+  const sprite = new THREE.Sprite(material)
+  // Scale proportional to ring — energy gives a subtle breathing effect
+  const spriteSize = 22 + energy * 4
+  sprite.scale.set(spriteSize, spriteSize, 1)
+  return sprite
 }
 
-// ── Glow halo for high-energy nodes ───────────────────────────────────────────
-// Cached glow textures per color to avoid creating canvas+texture per node
+// ── Glow halo (subtle, energy-based) ─────────────────────────────────────────
 
 const glowTextureCache = new Map<string, THREE.CanvasTexture>()
 const glowMaterialCache = new Map<string, THREE.SpriteMaterial>()
 
 function createGlowSprite(color: string, energy: number): THREE.Sprite {
-  // Cache texture by color
   let texture = glowTextureCache.get(color)
   if (!texture) {
     const canvas = document.createElement('canvas')
@@ -144,8 +239,9 @@ function createGlowSprite(color: string, energy: number): THREE.Sprite {
     const ctx = canvas.getContext('2d')!
 
     const gradient = ctx.createRadialGradient(64, 64, 0, 64, 64, 64)
-    gradient.addColorStop(0, `${color}88`)
-    gradient.addColorStop(0.4, `${color}44`)
+    gradient.addColorStop(0, `${color}55`)
+    gradient.addColorStop(0.3, `${color}33`)
+    gradient.addColorStop(0.7, `${color}11`)
     gradient.addColorStop(1, `${color}00`)
     ctx.fillStyle = gradient
     ctx.fillRect(0, 0, 128, 128)
@@ -154,56 +250,113 @@ function createGlowSprite(color: string, energy: number): THREE.Sprite {
     glowTextureCache.set(color, texture)
   }
 
-  // Cache material by color (opacity varies but we bucket it)
-  const opacityBucket = Math.round(Math.min(energy, 1.0) * 4) / 4 // 0, 0.25, 0.5, 0.75, 1.0
+  const opacityBucket = Math.round(Math.min(energy, 1.0) * 4) / 4
   const matKey = `${color}:${opacityBucket}`
   let material = glowMaterialCache.get(matKey)
   if (!material) {
     material = new THREE.SpriteMaterial({
       map: texture,
       transparent: true,
-      opacity: opacityBucket,
+      opacity: opacityBucket * 0.6,
       depthWrite: false,
     })
     glowMaterialCache.set(matKey, material)
   }
 
   const sprite = new THREE.Sprite(material)
-  const size = 20 + energy * 15
+  const size = 28 + energy * 14
   sprite.scale.set(size, size, 1)
   return sprite
 }
 
-// ── Billboard label ───────────────────────────────────────────────────────────
-// Labels are unique per node so they can't be cached, but SpriteText is lightweight
+// ── Central emoji sprite ─────────────────────────────────────────────────────
 
-function createLabel(text: string, color: string): SpriteText {
-  const maxLen = 24
-  const displayText = text.length > maxLen ? text.slice(0, maxLen - 1) + '…' : text
-
-  const sprite = new SpriteText(displayText) as SpriteTextInstance
-  sprite.color = '#e2e8f0'
-  sprite.textHeight = 3
-  sprite.backgroundColor = 'rgba(15, 23, 42, 0.75)'
-  sprite.padding = [1.5, 1]
-  sprite.borderRadius = 2
-  sprite.borderWidth = 0.3
-  sprite.borderColor = color
-  sprite.position.y = -10 // below the shape
-
+function createEmojiSprite(entityType: string, energy: number): SpriteText {
+  const emoji = ENTITY_EMOJIS[entityType] ?? '\u2753'
+  const sprite = new SpriteText(emoji) as SpriteTextInstance
+  // Emoji is THE node — prominent size, scaled by energy
+  sprite.textHeight = 8 + energy * 4  // 8 at rest → 12 at max energy
+  sprite.backgroundColor = 'transparent'
+  sprite.padding = [0, 0]
+  sprite.position.set(0, 0, 0) // dead center
   return sprite
 }
 
-// ── Emoji sprite ──────────────────────────────────────────────────────────────
+// ── Invisible hitbox sprite (enlarges clickable area) ─────────────────────────
+// react-force-graph-3d raycasts against the node's Three.js objects.
+// Sprites can be hard to click because their visual area is small.
+// We add a larger invisible sprite to expand the hit target.
 
-function createEmojiSprite(entityType: string, energy: number): SpriteText {
-  const emoji = ENTITY_EMOJIS[entityType] ?? '❓'
-  const sprite = new SpriteText(emoji) as SpriteTextInstance
-  sprite.textHeight = 5 + energy * 3  // bigger emoji for higher energy
-  sprite.backgroundColor = 'transparent'
-  sprite.padding = [0, 0]
-  sprite.position.y = 10  // above the shape
+let hitboxTexture: THREE.CanvasTexture | null = null
+let hitboxMaterial: THREE.SpriteMaterial | null = null
+
+function createHitboxSprite(): THREE.Sprite {
+  if (!hitboxTexture) {
+    const canvas = document.createElement('canvas')
+    canvas.width = 4
+    canvas.height = 4
+    const ctx = canvas.getContext('2d')!
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.01)' // nearly invisible but raycastable
+    ctx.fillRect(0, 0, 4, 4)
+    hitboxTexture = new THREE.CanvasTexture(canvas)
+  }
+  if (!hitboxMaterial) {
+    hitboxMaterial = new THREE.SpriteMaterial({
+      map: hitboxTexture,
+      transparent: true,
+      opacity: 0.01,
+      depthWrite: false,
+    })
+  }
+  const sprite = new THREE.Sprite(hitboxMaterial)
+  sprite.scale.set(26, 26, 1) // larger than the visible ring (~22)
   return sprite
+}
+
+// ── Subtitle builders per entity type ────────────────────────────────────────
+
+function getNodeSubtitle(node: Graph3DNode): string | undefined {
+  const data = node.data
+  const entityType = node.entityType
+
+  if (entityType === 'chat_session') {
+    const parts: string[] = []
+    if (data.model) parts.push(String(data.model))
+    if (data.messageCount) parts.push(`${data.messageCount} msgs`)
+    if (data.totalCostUsd && Number(data.totalCostUsd) > 0) {
+      parts.push(`$${Number(data.totalCostUsd).toFixed(3)}`)
+    }
+    return parts.length > 0 ? parts.join(' · ') : undefined
+  }
+
+  if (entityType === 'feature_graph') {
+    const count = data.entity_count
+    if (count) return `${count} entities`
+    return undefined
+  }
+
+  if (entityType === 'task') {
+    const parts: string[] = []
+    if (data.status) parts.push(String(data.status))
+    const sc = data.step_count as number | undefined
+    const csc = data.completed_step_count as number | undefined
+    if (sc) parts.push(`${csc ?? 0}/${sc} steps`)
+    return parts.length > 0 ? parts.join(' · ') : undefined
+  }
+
+  if (entityType === 'file') {
+    // Show parent directory for context
+    const path = data.path as string | undefined
+    if (path) {
+      const parts = path.split('/')
+      if (parts.length > 2) {
+        return parts.slice(-3, -1).join('/')
+      }
+    }
+    return undefined
+  }
+
+  return undefined
 }
 
 // ── Main factory ──────────────────────────────────────────────────────────────
@@ -214,29 +367,25 @@ export function createNodeObject(node: Graph3DNode): THREE.Object3D {
   const entityType = node.entityType
   const color = ENTITY_COLORS[entityType as keyof typeof ENTITY_COLORS] ?? '#6B7280'
   const energy = (node.data.energy as number) ?? 0
+  const subtitle = getNodeSubtitle(node)
 
-  // 1. Main shape (shared geometry + shared material)
-  //    Energy scales the mesh: low energy = small, high energy = big
-  const geometry = getGeometry(entityType)
-  const material = getMaterial(entityType, color, energy)
-  const mesh = new THREE.Mesh(geometry, material)
-  const energyScale = 0.7 + energy * 0.6  // 0.7x at 0 energy → 1.3x at 1.0
-  mesh.scale.setScalar(energyScale)
-  group.add(mesh)
+  // 0. Invisible hitbox — ensures the node is easy to click/hover
+  const hitbox = createHitboxSprite()
+  group.add(hitbox)
 
-  // 2. Glow halo — visible from energy > 0.3 (not just > 0.5)
-  if (energy > 0.3) {
+  // 1. Glow halo (behind everything) — only for energy > 0.4
+  if (energy > 0.4) {
     const glow = createGlowSprite(color, energy)
     group.add(glow)
   }
 
-  // 3. Emoji above the shape
+  // 2. Ring + circular label (+ optional subtitle on top arc)
+  const ringLabel = createRingLabelSprite(node.label, color, energy, subtitle)
+  group.add(ringLabel)
+
+  // 3. Central emoji — THE primary visual element (on top)
   const emojiSprite = createEmojiSprite(entityType, energy)
   group.add(emojiSprite)
-
-  // 4. Billboard label below
-  const label = createLabel(node.label, color)
-  group.add(label)
 
   return group
 }
@@ -244,12 +393,14 @@ export function createNodeObject(node: Graph3DNode): THREE.Object3D {
 // ── Cleanup (call on unmount) ──────────────────────────────────────────────────
 
 export function disposeNodeCaches(): void {
-  geometryCache.forEach((geo) => geo.dispose())
-  geometryCache.clear()
-  materialCache.forEach((mat) => mat.dispose())
-  materialCache.clear()
+  ringLabelTextureCache.forEach((tex) => tex.dispose())
+  ringLabelTextureCache.clear()
+  ringLabelMaterialCache.forEach((mat) => mat.dispose())
+  ringLabelMaterialCache.clear()
   glowTextureCache.forEach((tex) => tex.dispose())
   glowTextureCache.clear()
   glowMaterialCache.forEach((mat) => mat.dispose())
   glowMaterialCache.clear()
+  if (hitboxTexture) { hitboxTexture.dispose(); hitboxTexture = null }
+  if (hitboxMaterial) { hitboxMaterial.dispose(); hitboxMaterial = null }
 }

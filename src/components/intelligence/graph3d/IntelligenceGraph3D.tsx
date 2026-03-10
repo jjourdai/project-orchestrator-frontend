@@ -23,6 +23,7 @@ import {
   showCommunityHullsAtom,
   legendHoveredTypeAtom,
   hoveredProjectSlugAtom,
+  highlightedGroupAtom,
 } from '@/atoms/intelligence'
 import { activationStateAtom } from '../SpreadingActivation'
 import type { IntelligenceNode, IntelligenceEdge } from '@/types/intelligence'
@@ -96,6 +97,7 @@ export default function IntelligenceGraph3D({ nodes, edges }: IntelligenceGraph3
   const showCommunityHulls = useAtomValue(showCommunityHullsAtom)
   const legendHoveredType = useAtomValue(legendHoveredTypeAtom)
   const hoveredProjectSlug = useAtomValue(hoveredProjectSlugAtom)
+  const highlightedGroup = useAtomValue(highlightedGroupAtom)
 
   const { transformToGraph3D, savePositions } = useGraph3DLayout()
 
@@ -291,6 +293,16 @@ export default function IntelligenceGraph3D({ nodes, edges }: IntelligenceGraph3
     return () => clearTimeout(timer)
   }, [showCommunityHulls, rebuildCommunityHulls])
 
+  // ── Auto-zoom: fit graph on first load ──────────────────────────────────
+  const hasAutoZoomedRef = useRef(false)
+
+  // Reset auto-zoom flag when data changes significantly (new graph loaded)
+  useEffect(() => {
+    if (needsRelayout) {
+      hasAutoZoomedRef.current = false
+    }
+  }, [needsRelayout])
+
   // ── Save positions when simulation stops ────────────────────────────────
   const onEngineStop = useCallback(() => {
     if (graphData.nodes.length > 0) {
@@ -299,6 +311,18 @@ export default function IntelligenceGraph3D({ nodes, edges }: IntelligenceGraph3
       if (hullNeedsRebuildRef.current) {
         hullNeedsRebuildRef.current = false
         rebuildCommunityHulls()
+      }
+
+      // Auto-zoom to fit all nodes on first layout completion
+      if (!hasAutoZoomedRef.current) {
+        hasAutoZoomedRef.current = true
+        const fg = graphRef.current
+        if (fg && typeof fg.zoomToFit === 'function') {
+          // Small delay to let positions finalize
+          setTimeout(() => {
+            fg.zoomToFit(800, 80) // 800ms transition, 80px padding
+          }, 100)
+        }
       }
     }
   }, [graphData.nodes, savePositions, rebuildCommunityHulls])
@@ -403,26 +427,39 @@ export default function IntelligenceGraph3D({ nodes, edges }: IntelligenceGraph3
       return 'rgba(107, 114, 128, 0.08)'
     }
 
+    // Group highlight — only show edges within the group
+    if (highlightedGroup) {
+      const bothInGroup = highlightedGroup.has(sourceId) && highlightedGroup.has(targetId)
+      if (bothInGroup) return link.color
+      // One end in group = faint connector visible
+      if (highlightedGroup.has(sourceId) || highlightedGroup.has(targetId)) return 'rgba(107, 114, 128, 0.12)'
+      return 'rgba(107, 114, 128, 0.03)'
+    }
+
     // Inter-community edges get a bright distinct color when hulls are visible
     if (showCommunityHulls && link.isInterCommunity) {
       return INTER_COMMUNITY_COLOR
     }
 
     return link.color
-  }, [hoveredNodeId, selectedNodeId, hasAnyHighlight, activation, showCommunityHulls])
+  }, [hoveredNodeId, selectedNodeId, hasAnyHighlight, activation, showCommunityHulls, highlightedGroup])
 
   const linkWidth = useCallback((link: Graph3DLink) => {
     const sourceId = typeof link.source === 'object' ? (link.source as Graph3DNode).id : link.source
     const targetId = typeof link.target === 'object' ? (link.target as Graph3DNode).id : link.target
+
+    // Energy factor: weight modulates width (0.5x at weight=0 → 2x at weight=1)
+    const weight = link.weight ?? 0.5
+    const energyFactor = 0.5 + weight * 1.5
 
     // Spreading activation — boost active edges
     if (activation.phase !== 'idle' && activation.phase !== 'searching') {
       const edgeKey = `${sourceId}-${targetId}`
       const edgeKeyRev = `${targetId}-${sourceId}`
       if (activation.activeEdges.has(edgeKey) || activation.activeEdges.has(edgeKeyRev)) {
-        return link.width * 3
+        return link.width * energyFactor * 2.5
       }
-      return link.width * 0.2
+      return link.width * 0.15
     }
 
     if (hasAnyHighlight) {
@@ -432,16 +469,22 @@ export default function IntelligenceGraph3D({ nodes, edges }: IntelligenceGraph3
       const isSelectConnected = selectedNodeId
         ? (sourceId === selectedNodeId || targetId === selectedNodeId)
         : false
-      return (isHoverConnected || isSelectConnected) ? link.width * 2 : link.width * 0.3
+      return (isHoverConnected || isSelectConnected) ? link.width * energyFactor * 2 : link.width * 0.15
     }
 
-    // Inter-community edges are thicker to emphasize cross-boundary communication
+    // Group highlight — edges within group keep normal width, outside dimmed
+    if (highlightedGroup) {
+      const bothInGroup = highlightedGroup.has(sourceId) && highlightedGroup.has(targetId)
+      return bothInGroup ? link.width * energyFactor * 1.5 : link.width * 0.1
+    }
+
+    // Inter-community edges slightly thicker
     if (showCommunityHulls && link.isInterCommunity) {
-      return link.width * 2.5
+      return link.width * energyFactor * 1.5
     }
 
-    return link.width
-  }, [hoveredNodeId, selectedNodeId, hasAnyHighlight, activation, showCommunityHulls])
+    return link.width * energyFactor
+  }, [hoveredNodeId, selectedNodeId, hasAnyHighlight, activation, showCommunityHulls, highlightedGroup])
 
   const linkParticles = useCallback((link: Graph3DLink) => {
     // Boost particles on activated synapse edges
@@ -497,56 +540,64 @@ export default function IntelligenceGraph3D({ nodes, edges }: IntelligenceGraph3
     return hasAnyHighlight ? 0.3 : 1.0
   }, [hasAnyHighlight])
 
-  // ── Spreading Activation — live 3D material updates ───────────────────
-  // Ref-tracked approach: we keep direct references to every Three.js object
-  // we've modified, so cleanup is deterministic and independent of graphData.
+  // ── Sprite-based visual effects ─────────────────────────────────────────
+  // Nodes are now 100% billboard sprites (no Mesh). Effects work by modifying
+  // SpriteMaterial opacity on each child sprite of the node group.
+  // For tinting we modify the material's color property.
+
+  type AnySpriteChild = THREE.Sprite
+  interface SpriteOriginal { opacity: number; color: string }
+
+  function saveSprite(sprite: AnySpriteChild): SpriteOriginal {
+    const mat = sprite.material as THREE.SpriteMaterial
+    return { opacity: mat.opacity, color: '#' + (mat.color?.getHexString?.() ?? 'ffffff') }
+  }
+
+  function restoreSprite(sprite: AnySpriteChild, orig: SpriteOriginal): void {
+    const mat = sprite.material as THREE.SpriteMaterial
+    mat.opacity = orig.opacity
+    mat.color = new THREE.Color(orig.color)
+    mat.needsUpdate = true
+  }
+
+  function setNodeOpacityAll(obj: THREE.Object3D, opacity: number): void {
+    obj.traverse((child) => {
+      if (child instanceof THREE.Sprite && child.material) {
+        ;(child.material as THREE.SpriteMaterial).opacity = opacity
+        ;(child.material as THREE.SpriteMaterial).needsUpdate = true
+      }
+    })
+  }
+
+  // ── Spreading Activation — live 3D visual updates ───────────────────
   const activationPhase = activation.phase
 
-  // Dirty tracking: materials we've modified + lights we've added
-  // This survives across renders and doesn't depend on graphData.nodes
   const dirtyRef = useRef<{
-    materials: Map<THREE.MeshLambertMaterial, { emissive: string; emissiveIntensity: number; opacity: number }>
+    sprites: Map<AnySpriteChild, SpriteOriginal>
     lights: Set<THREE.PointLight>
-    // Track what state each node was last set to, for diff-based updates
     nodeStates: Map<string, 'direct' | 'propagated' | 'dimmed'>
-  }>({ materials: new Map(), lights: new Set(), nodeStates: new Map() })
+  }>({ sprites: new Map(), lights: new Set(), nodeStates: new Map() })
 
   useEffect(() => {
     const fg = graphRef.current
     if (!fg || typeof fg.scene !== 'function') return
 
-    const EMERALD = new THREE.Color('#34D399')  // direct activation
-    const VIOLET = new THREE.Color('#A78BFA')   // propagated activation
     const isActive = activationPhase !== 'idle' && activationPhase !== 'searching'
     const dirty = dirtyRef.current
 
-    // During 'searching' phase, don't touch materials — keep previous state visible
     if (activationPhase === 'searching') return
 
-    // ── DEACTIVATION: restore all tracked dirty objects ──────────────────
+    // ── DEACTIVATION ──
     if (!isActive) {
-      // Restore all modified materials from saved originals
-      for (const [mat, orig] of dirty.materials) {
-        mat.emissive = new THREE.Color(orig.emissive)
-        mat.emissiveIntensity = orig.emissiveIntensity
-        mat.opacity = orig.opacity
-        mat.needsUpdate = true
-      }
-      dirty.materials.clear()
-
-      // Remove all tracked PointLights (two-pass: collect then remove)
-      for (const light of dirty.lights) {
-        light.parent?.remove(light)
-      }
+      for (const [sprite, orig] of dirty.sprites) { restoreSprite(sprite, orig) }
+      dirty.sprites.clear()
+      for (const light of dirty.lights) { light.parent?.remove(light) }
       dirty.lights.clear()
-
-      // Clear node state tracking
       dirty.nodeStates.clear()
       return
     }
 
-    // ── ACTIVE PHASE: diff-based material updates per-node ──────────────
-    // Determine desired state for each node, only mutate if it changed
+    // ── ACTIVE PHASE ──
     const newNodeStates = new Map<string, 'direct' | 'propagated' | 'dimmed'>()
 
     for (const node of graphData.nodes) {
@@ -559,62 +610,32 @@ export default function IntelligenceGraph3D({ nodes, edges }: IntelligenceGraph3
       const score = activation.scores.get(node.id) ?? 0
       newNodeStates.set(node.id, desiredState)
 
-      // Diff check: skip if this node's state hasn't changed
       const prevState = dirty.nodeStates.get(node.id)
       if (prevState === desiredState && desiredState === 'dimmed') continue
-      // For lit nodes, score may change between propagation waves, so always update
 
       const isLit = isDirect || isPropagated
 
       // ── PointLight management ──
-      // Remove existing activation light if present
       const existingLight = obj.children.find((c): c is THREE.PointLight => c instanceof THREE.PointLight && c.userData.__act__)
-      if (existingLight) {
-        obj.remove(existingLight)
-        dirty.lights.delete(existingLight)
-      }
+      if (existingLight) { obj.remove(existingLight); dirty.lights.delete(existingLight) }
 
-      // Add PointLight on activated nodes
       if (isLit) {
         const lightColor = isDirect ? 0x34D399 : 0xA78BFA
-        const intensity = isDirect ? 80 + score * 120 : 40 + score * 80
-        const distance = isDirect ? 120 : 80
+        const intensity = isDirect ? 60 + score * 80 : 30 + score * 50
+        const distance = isDirect ? 100 : 70
         const pointLight = new THREE.PointLight(lightColor, intensity, distance, 1.5)
         pointLight.userData.__act__ = true
         obj.add(pointLight)
         dirty.lights.add(pointLight)
       }
 
-      // ── Material updates ──
+      // ── Sprite opacity updates ──
+      const targetOpacity = isDirect ? 1.0 : isPropagated ? 0.85 : 0.12
       obj.traverse((child) => {
-        if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshLambertMaterial) {
-          const mat = child.material
-
-          // Save original on first touch (track in ref, not on userData)
-          if (!dirty.materials.has(mat)) {
-            dirty.materials.set(mat, {
-              emissive: '#' + mat.emissive.getHexString(),
-              emissiveIntensity: mat.emissiveIntensity,
-              opacity: mat.opacity,
-            })
-          }
-
-          if (isDirect) {
-            mat.emissive = EMERALD
-            mat.emissiveIntensity = 0.8 + score * 0.6
-            mat.opacity = 1.0
-          } else if (isPropagated) {
-            mat.emissive = VIOLET
-            mat.emissiveIntensity = 0.5 + score * 0.5
-            mat.opacity = 0.95
-          } else {
-            // Dim non-activated nodes
-            const orig = dirty.materials.get(mat)!
-            mat.emissive = new THREE.Color(orig.emissive)
-            mat.emissiveIntensity = 0.05
-            mat.opacity = 0.15
-          }
-          mat.needsUpdate = true
+        if (child instanceof THREE.Sprite && child.material) {
+          if (!dirty.sprites.has(child)) { dirty.sprites.set(child, saveSprite(child)) }
+          ;(child.material as THREE.SpriteMaterial).opacity = targetOpacity
+          ;(child.material as THREE.SpriteMaterial).needsUpdate = true
         }
       })
     }
@@ -623,8 +644,7 @@ export default function IntelligenceGraph3D({ nodes, edges }: IntelligenceGraph3
   }, [activationPhase, activation.directIds, activation.propagatedIds, activation.scores, graphData.nodes])
 
   // ── Heatmap overlays — energy (notes) & churn (files) ────────────────────
-  // Same ref-tracked pattern: save originals, mutate, restore on toggle off.
-  const heatmapDirtyRef = useRef<Map<THREE.MeshLambertMaterial, { emissive: string; emissiveIntensity: number; opacity: number }>>(new Map())
+  const heatmapDirtyRef = useRef<Map<AnySpriteChild, SpriteOriginal>>(new Map())
 
   useEffect(() => {
     const fg = graphRef.current
@@ -633,101 +653,57 @@ export default function IntelligenceGraph3D({ nodes, edges }: IntelligenceGraph3
     const isAnyHeatmap = energyHeatmap || touchesHeatmap
     const hDirty = heatmapDirtyRef.current
 
-    // Skip if spreading activation is running — it takes priority
     if (activationPhase !== 'idle' && activationPhase !== 'searching') {
-      // Still clean up heatmap state if it was active before activation started
       if (hDirty.size > 0) {
-        for (const [mat, orig] of hDirty) {
-          mat.emissive = new THREE.Color(orig.emissive)
-          mat.emissiveIntensity = orig.emissiveIntensity
-          mat.opacity = orig.opacity
-          mat.needsUpdate = true
-        }
+        for (const [sprite, orig] of hDirty) { restoreSprite(sprite, orig) }
         hDirty.clear()
       }
       return
     }
 
-    // ── DEACTIVATION: restore all heatmap-modified materials ──
     if (!isAnyHeatmap) {
-      for (const [mat, orig] of hDirty) {
-        mat.emissive = new THREE.Color(orig.emissive)
-        mat.emissiveIntensity = orig.emissiveIntensity
-        mat.opacity = orig.opacity
-        mat.needsUpdate = true
-      }
+      for (const [sprite, orig] of hDirty) { restoreSprite(sprite, orig) }
       hDirty.clear()
       return
     }
 
-    // ── ACTIVE: color nodes by energy/churn ──
     for (const node of graphData.nodes) {
       const obj = (node as Graph3DNode & { __threeObj?: THREE.Object3D }).__threeObj
       if (!obj) continue
 
-      // Energy heatmap: note nodes colored red→yellow→green by energy
       const isNote = node.entityType === 'note'
       const isFile = node.entityType === 'file'
 
       if (energyHeatmap && isNote) {
         const energy = Math.min(1, Math.max(0, (node.data.energy as number) ?? 0))
         const heatColor = energyToColor3(energy)
-
         obj.traverse((child) => {
-          if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshLambertMaterial) {
-            const mat = child.material
-            if (!hDirty.has(mat)) {
-              hDirty.set(mat, {
-                emissive: '#' + mat.emissive.getHexString(),
-                emissiveIntensity: mat.emissiveIntensity,
-                opacity: mat.opacity,
-              })
-            }
-            mat.emissive = heatColor
-            mat.emissiveIntensity = 0.4 + energy * 0.6
-            mat.opacity = 0.6 + energy * 0.4
-            mat.needsUpdate = true
+          if (child instanceof THREE.Sprite && child.material) {
+            if (!hDirty.has(child)) { hDirty.set(child, saveSprite(child)) }
+            ;(child.material as THREE.SpriteMaterial).color = heatColor
+            ;(child.material as THREE.SpriteMaterial).opacity = 0.6 + energy * 0.4
+            ;(child.material as THREE.SpriteMaterial).needsUpdate = true
           }
         })
       } else if (touchesHeatmap && isFile) {
-        // Churn heatmap: file nodes colored by churn score (green intensity)
         const attrs = node.data.attributes as Record<string, unknown> | undefined
         const churn = Math.min(1, Math.max(0, (attrs?.churnScore as number) ?? (node.data.churnScore as number) ?? 0))
         if (churn <= 0) continue
-
         const heatColor = churnToColor3(churn)
-
         obj.traverse((child) => {
-          if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshLambertMaterial) {
-            const mat = child.material
-            if (!hDirty.has(mat)) {
-              hDirty.set(mat, {
-                emissive: '#' + mat.emissive.getHexString(),
-                emissiveIntensity: mat.emissiveIntensity,
-                opacity: mat.opacity,
-              })
-            }
-            mat.emissive = heatColor
-            mat.emissiveIntensity = 0.3 + churn * 0.7
-            mat.opacity = 0.6 + churn * 0.4
-            mat.needsUpdate = true
+          if (child instanceof THREE.Sprite && child.material) {
+            if (!hDirty.has(child)) { hDirty.set(child, saveSprite(child)) }
+            ;(child.material as THREE.SpriteMaterial).color = heatColor
+            ;(child.material as THREE.SpriteMaterial).opacity = 0.6 + churn * 0.4
+            ;(child.material as THREE.SpriteMaterial).needsUpdate = true
           }
         })
       } else if (isAnyHeatmap && !isNote && !isFile) {
-        // Dim unrelated nodes when a heatmap is active
         obj.traverse((child) => {
-          if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshLambertMaterial) {
-            const mat = child.material
-            if (!hDirty.has(mat)) {
-              hDirty.set(mat, {
-                emissive: '#' + mat.emissive.getHexString(),
-                emissiveIntensity: mat.emissiveIntensity,
-                opacity: mat.opacity,
-              })
-            }
-            mat.emissiveIntensity = 0.05
-            mat.opacity = 0.2
-            mat.needsUpdate = true
+          if (child instanceof THREE.Sprite && child.material) {
+            if (!hDirty.has(child)) { hDirty.set(child, saveSprite(child)) }
+            ;(child.material as THREE.SpriteMaterial).opacity = 0.15
+            ;(child.material as THREE.SpriteMaterial).needsUpdate = true
           }
         })
       }
@@ -735,8 +711,7 @@ export default function IntelligenceGraph3D({ nodes, edges }: IntelligenceGraph3
   }, [energyHeatmap, touchesHeatmap, graphData.nodes, activationPhase])
 
   // ── Legend hover — illuminate nodes matching the hovered entity type ─────
-  // Same ref-tracked pattern: save originals, mutate, restore on hover off.
-  const legendDirtyRef = useRef<Map<THREE.MeshLambertMaterial, { emissive: string; emissiveIntensity: number; opacity: number }>>(new Map())
+  const legendDirtyRef = useRef<Map<AnySpriteChild, SpriteOriginal>>(new Map())
   const legendScaledRef = useRef<Map<THREE.Object3D, THREE.Vector3>>(new Map())
 
   useEffect(() => {
@@ -744,141 +719,110 @@ export default function IntelligenceGraph3D({ nodes, edges }: IntelligenceGraph3
     const lScaled = legendScaledRef.current
 
     const restoreLegend = () => {
-      for (const [mat, orig] of lDirty) {
-        mat.emissive = new THREE.Color(orig.emissive)
-        mat.emissiveIntensity = orig.emissiveIntensity
-        mat.opacity = orig.opacity
-        mat.needsUpdate = true
-      }
+      for (const [sprite, orig] of lDirty) { restoreSprite(sprite, orig) }
       lDirty.clear()
-      for (const [obj, origScale] of lScaled) {
-        obj.scale.copy(origScale)
-      }
+      for (const [obj, origScale] of lScaled) { obj.scale.copy(origScale) }
       lScaled.clear()
     }
 
-    // Skip if other overlays are active (activation or heatmaps take priority)
-    if (activationPhase !== 'idle' && activationPhase !== 'searching') {
-      restoreLegend()
-      return
-    }
+    if (activationPhase !== 'idle' && activationPhase !== 'searching') { restoreLegend(); return }
+    if (!legendHoveredType) { restoreLegend(); return }
 
-    // ── DEACTIVATION: restore all legend-modified materials ──
-    if (!legendHoveredType) {
-      restoreLegend()
-      return
-    }
-
-    // ── ACTIVE: boost matching nodes, dim others ──
     for (const node of graphData.nodes) {
       const obj = (node as Graph3DNode & { __threeObj?: THREE.Object3D }).__threeObj
       if (!obj) continue
 
       const isMatch = node.entityType === legendHoveredType
+      const targetOpacity = isMatch ? 1.0 : 0.06
 
       obj.traverse((child) => {
-        if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshLambertMaterial) {
-          const mat = child.material
-          if (!lDirty.has(mat)) {
-            lDirty.set(mat, {
-              emissive: '#' + mat.emissive.getHexString(),
-              emissiveIntensity: mat.emissiveIntensity,
-              opacity: mat.opacity,
-            })
-          }
-          if (isMatch) {
-            const color = ENTITY_COLORS[node.entityType as keyof typeof ENTITY_COLORS] ?? '#6B7280'
-            mat.emissive = new THREE.Color(color)
-            mat.emissiveIntensity = 1.5
-            mat.opacity = 1.0
-          } else {
-            mat.emissive = new THREE.Color('#000000')
-            mat.emissiveIntensity = 0
-            mat.opacity = 0.08
-          }
-          mat.needsUpdate = true
+        if (child instanceof THREE.Sprite && child.material) {
+          if (!lDirty.has(child)) { lDirty.set(child, saveSprite(child)) }
+          ;(child.material as THREE.SpriteMaterial).opacity = targetOpacity
+          ;(child.material as THREE.SpriteMaterial).needsUpdate = true
         }
       })
 
-      // Scale boost for matched nodes, shrink for others
-      if (!lScaled.has(obj)) {
-        lScaled.set(obj, obj.scale.clone())
-      }
-      if (isMatch) {
-        obj.scale.setScalar(1.6)
-      } else {
-        obj.scale.setScalar(0.5)
-      }
+      if (!lScaled.has(obj)) { lScaled.set(obj, obj.scale.clone()) }
+      obj.scale.setScalar(isMatch ? 1.6 : 0.5)
     }
   }, [legendHoveredType, graphData.nodes, activationPhase])
 
   // ── Project hover highlight — illuminate nodes belonging to hovered project ──
-  const projectDirtyRef = useRef<Map<THREE.MeshLambertMaterial, { emissive: string; emissiveIntensity: number; opacity: number }>>(new Map())
+  const projectDirtyRef = useRef<Map<AnySpriteChild, SpriteOriginal>>(new Map())
 
   useEffect(() => {
     if (!graphRef.current) return
     const pDirty = projectDirtyRef.current
 
     const restoreAll = () => {
-      for (const [mat, orig] of pDirty) {
-        mat.emissive = new THREE.Color(orig.emissive)
-        mat.emissiveIntensity = orig.emissiveIntensity
-        mat.opacity = orig.opacity
-        mat.needsUpdate = true
-      }
+      for (const [sprite, orig] of pDirty) { restoreSprite(sprite, orig) }
       pDirty.clear()
     }
 
-    // Skip if legend hover or activation is active (they take priority)
-    if (legendHoveredType || (activationPhase !== 'idle' && activationPhase !== 'searching')) {
-      restoreAll()
-      return
-    }
+    if (legendHoveredType || (activationPhase !== 'idle' && activationPhase !== 'searching')) { restoreAll(); return }
+    if (!hoveredProjectSlug) { restoreAll(); return }
 
-    // ── DEACTIVATION: restore all project-modified materials ──
-    if (!hoveredProjectSlug) {
-      restoreAll()
-      return
-    }
-
-    // ── ACTIVE: subtle glow for hovered project, gentle dim for others ──
     for (const node of graphData.nodes) {
       const obj = (node as Graph3DNode & { __threeObj?: THREE.Object3D }).__threeObj
       if (!obj) continue
 
-      // projectSlug (camelCase from hook mapping) or project_slug (snake_case from backend spread)
       const nodeProjectSlug = (node.data.projectSlug ?? node.data.project_slug) as string | undefined
-      // Nodes without a project (global notes, workspace-level entities) stay neutral
       if (!nodeProjectSlug) continue
       const isMatch = nodeProjectSlug === hoveredProjectSlug
 
       obj.traverse((child) => {
-        if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshLambertMaterial) {
-          const mat = child.material
-          if (!pDirty.has(mat)) {
-            pDirty.set(mat, {
-              emissive: '#' + mat.emissive.getHexString(),
-              emissiveIntensity: mat.emissiveIntensity,
-              opacity: mat.opacity,
-            })
-          }
-          if (isMatch) {
-            // Subtle glow: gentle emissive boost, full opacity
-            const color = ENTITY_COLORS[node.entityType as keyof typeof ENTITY_COLORS] ?? '#6B7280'
-            mat.emissive = new THREE.Color(color)
-            mat.emissiveIntensity = 0.6
-            mat.opacity = 1.0
-          } else {
-            // Gentle dim: still visible but faded
-            mat.emissiveIntensity = 0.02
-            mat.opacity = 0.18
-          }
-          mat.needsUpdate = true
+        if (child instanceof THREE.Sprite && child.material) {
+          if (!pDirty.has(child)) { pDirty.set(child, saveSprite(child)) }
+          ;(child.material as THREE.SpriteMaterial).opacity = isMatch ? 1.0 : 0.15
+          ;(child.material as THREE.SpriteMaterial).needsUpdate = true
         }
       })
-      // No scale change — keeps the graph layout stable
     }
   }, [hoveredProjectSlug, legendHoveredType, graphData.nodes, activationPhase])
+
+  // ── Group highlight — isolate a subset of nodes (FG hover, milestone hover, etc.) ──
+  const groupDirtyRef = useRef<Map<AnySpriteChild, SpriteOriginal>>(new Map())
+  const groupScaledRef = useRef<Map<THREE.Object3D, THREE.Vector3>>(new Map())
+
+  useEffect(() => {
+    const gDirty = groupDirtyRef.current
+    const gScaled = groupScaledRef.current
+
+    const restoreGroup = () => {
+      for (const [sprite, orig] of gDirty) { restoreSprite(sprite, orig) }
+      gDirty.clear()
+      for (const [obj, origScale] of gScaled) { obj.scale.copy(origScale) }
+      gScaled.clear()
+    }
+
+    // Skip if higher-priority effects are active
+    if (legendHoveredType || hoveredProjectSlug || (activationPhase !== 'idle' && activationPhase !== 'searching')) {
+      restoreGroup()
+      return
+    }
+    if (!highlightedGroup) { restoreGroup(); return }
+
+    for (const node of graphData.nodes) {
+      const obj = (node as Graph3DNode & { __threeObj?: THREE.Object3D }).__threeObj
+      if (!obj) continue
+
+      const isInGroup = highlightedGroup.has(node.id)
+      const targetOpacity = isInGroup ? 1.0 : 0.08
+
+      obj.traverse((child) => {
+        if (child instanceof THREE.Sprite && child.material) {
+          if (!gDirty.has(child)) { gDirty.set(child, saveSprite(child)) }
+          ;(child.material as THREE.SpriteMaterial).opacity = targetOpacity
+          ;(child.material as THREE.SpriteMaterial).needsUpdate = true
+        }
+      })
+
+      // Subtle scale bump for group members
+      if (!gScaled.has(obj)) { gScaled.set(obj, obj.scale.clone()) }
+      obj.scale.setScalar(isInGroup ? 1.3 : 0.6)
+    }
+  }, [highlightedGroup, legendHoveredType, hoveredProjectSlug, graphData.nodes, activationPhase])
 
   // ── Spreading Activation — zoom camera to activated cluster ──────────────
   const prevActivationPhaseRef = useRef<string>('idle')
@@ -941,37 +885,21 @@ export default function IntelligenceGraph3D({ nodes, edges }: IntelligenceGraph3
     // Skip if activation is running (but not searching) — it overrides materials
     if (activation.phase !== 'idle' && activation.phase !== 'searching') { prevSelectedRef.current = selectedNodeId; return }
 
-    // Reset previous selected node
+    // Reset previous selected node — restore full opacity
     if (prevSelectedRef.current && prevSelectedRef.current !== selectedNodeId) {
       const prevNode = graphData.nodes.find((n) => n.id === prevSelectedRef.current)
       const prevObj = (prevNode as Graph3DNode & { __threeObj?: THREE.Object3D } | undefined)?.__threeObj
       if (prevObj) {
-        prevObj.traverse((child) => {
-          if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshLambertMaterial) {
-            const baseColor = ENTITY_COLORS[prevNode!.entityType as keyof typeof ENTITY_COLORS] ?? '#6B7280'
-            const energy = (prevNode!.data.energy as number) ?? 0
-            child.material.emissive = new THREE.Color(baseColor)
-            child.material.emissiveIntensity = 0.15 + energy * 0.3
-            child.material.opacity = 0.9
-            child.material.needsUpdate = true
-          }
-        })
+        setNodeOpacityAll(prevObj, 1.0)
       }
     }
 
-    // Highlight newly selected node — cyan tint
+    // Highlight newly selected node — full brightness + scale pulse
     if (selectedNodeId) {
       const selNode = graphData.nodes.find((n) => n.id === selectedNodeId)
       const selObj = (selNode as Graph3DNode & { __threeObj?: THREE.Object3D } | undefined)?.__threeObj
       if (selObj) {
-        selObj.traverse((child) => {
-          if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshLambertMaterial) {
-            child.material.emissive = new THREE.Color(HIGHLIGHT_COLOR_SELECT)
-            child.material.emissiveIntensity = 0.7
-            child.material.opacity = 1.0
-            child.material.needsUpdate = true
-          }
-        })
+        setNodeOpacityAll(selObj, 1.0)
       }
     }
 
@@ -1114,14 +1042,14 @@ export default function IntelligenceGraph3D({ nodes, edges }: IntelligenceGraph3
         nodeThreeObjectExtend={false}
         nodeOpacity={nodeOpacity}
         nodeResolution={12}
-        // Link styling
+        // Link styling — subtle lines, energy-proportional
         linkColor={linkColor}
         linkWidth={linkWidth}
-        linkOpacity={0.6}
+        linkOpacity={0.35}
         linkDirectionalParticles={linkParticles}
         linkDirectionalParticleSpeed={linkParticleSpeed}
         linkDirectionalParticleColor={linkParticleColor}
-        linkDirectionalParticleWidth={1.5}
+        linkDirectionalParticleWidth={1.0}
         // Interactions
         onNodeClick={onNodeClick}
         onNodeHover={onNodeHover}

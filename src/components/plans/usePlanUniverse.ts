@@ -3,12 +3,14 @@
 // ============================================================================
 //
 // Builds nodes + links for react-force-graph-3d from the plan's dependency
-// graph, decisions, constraints, commits, and affected files.
-// Reuses the same UniverseNode / UniverseLink types as useTaskUniverse.
+// graph, decisions, constraints, commits, affected files, and chat sessions.
+//
+// Feature graphs are returned SEPARATELY so the UI can toggle them on/off.
+// When toggled on, their entities interconnect with the base graph.
 // ============================================================================
 
 import { useCallback, useEffect, useState } from 'react'
-import { plansApi } from '@/services'
+import { plansApi, featureGraphsApi, chatApi, commitsApi } from '@/services'
 import { ENTITY_COLORS } from '@/constants/intelligence'
 import type {
   DependencyGraph,
@@ -16,6 +18,8 @@ import type {
   Constraint,
   Decision,
   Commit,
+  FeatureGraphDetail,
+  ChatSession,
 } from '@/types'
 import type { UniverseNode, UniverseLink } from '../tasks/useTaskUniverse'
 
@@ -32,22 +36,33 @@ const TASK_STATUS_COLORS: Record<string, string> = {
   failed: '#EF4444',      // red-500
 }
 
-// ── Build graph from plan data ─────────────────────────────────────────────────
+// ── Build base graph (without feature graphs) ────────────────────────────────
 
-function buildPlanGraph(
+function buildBaseGraph(
   planId: string,
   planTitle: string,
   graph: DependencyGraph,
   constraints: Constraint[],
   decisions: Decision[],
   commits: Commit[],
+  chatSessions: ChatSession[],
+  /** Map of commit SHA → list of file paths touched by the commit */
+  commitFilesMap: Map<string, string[]>,
 ): { nodes: UniverseNode[]; links: UniverseLink[] } {
   const nodes: UniverseNode[] = []
   const links: UniverseLink[] = []
   const fileNodeIds = new Set<string>()
+  const nodeIds = new Set<string>()
+
+  const addNode = (node: UniverseNode) => {
+    if (!nodeIds.has(node.id)) {
+      nodeIds.add(node.id)
+      nodes.push(node)
+    }
+  }
 
   // ── Center node: Plan ────────────────────────────────────────────────────────
-  nodes.push({
+  addNode({
     id: planId,
     label: planTitle,
     type: 'plan',
@@ -58,7 +73,7 @@ function buildPlanGraph(
   // ── Task nodes (from dependency graph) ───────────────────────────────────────
   for (const task of graph.nodes || []) {
     const taskColor = TASK_STATUS_COLORS[task.status] ?? ENTITY_COLORS.task
-    nodes.push({
+    addNode({
       id: task.id,
       label: task.title || task.id.slice(0, 8),
       type: 'task',
@@ -80,7 +95,7 @@ function buildPlanGraph(
         fileNodeIds.add(fileId)
         const parts = filePath.split('/')
         const fileName = parts[parts.length - 1] || filePath
-        nodes.push({
+        addNode({
           id: fileId,
           label: fileName,
           type: 'file',
@@ -100,7 +115,7 @@ function buildPlanGraph(
   // ── Constraints ──────────────────────────────────────────────────────────────
   for (const constraint of constraints) {
     const constraintId = `constraint:${constraint.id}`
-    nodes.push({
+    addNode({
       id: constraintId,
       label: constraint.description.slice(0, 30),
       type: 'constraint',
@@ -116,7 +131,7 @@ function buildPlanGraph(
     const label = decision.chosen_option
       ? `${decision.description.slice(0, 20)} → ${decision.chosen_option}`
       : decision.description.slice(0, 30)
-    nodes.push({
+    addNode({
       id: decId,
       label,
       type: 'decision',
@@ -132,7 +147,7 @@ function buildPlanGraph(
   // ── Commits ──────────────────────────────────────────────────────────────────
   for (const commit of commits) {
     const commitId = `commit:${commit.sha}`
-    nodes.push({
+    addNode({
       id: commitId,
       label: commit.sha.slice(0, 7) + (commit.message ? ` ${commit.message.slice(0, 20)}` : ''),
       type: 'commit',
@@ -140,11 +155,50 @@ function buildPlanGraph(
       color: ENTITY_COLORS.commit,
     })
     links.push({ source: planId, target: commitId, type: 'LINKED_TO' })
+
+    // TOUCHES links: commit → files it modified
+    const touchedFiles = commitFilesMap.get(commit.sha) || []
+    for (const filePath of touchedFiles) {
+      const fileId = `file:${filePath}`
+      // Create file node if not already present (from affected_files)
+      if (!fileNodeIds.has(fileId)) {
+        fileNodeIds.add(fileId)
+        const parts = filePath.split('/')
+        const fileName = parts[parts.length - 1] || filePath
+        addNode({
+          id: fileId,
+          label: fileName,
+          type: 'file',
+          data: { path: filePath, energy: 0.3 },
+          color: ENTITY_COLORS.file,
+        })
+      }
+      links.push({ source: commitId, target: fileId, type: 'TOUCHES' })
+    }
   }
 
-  // ── Limit to ~150 nodes ──────────────────────────────────────────────────────
-  if (nodes.length > 150) {
-    const kept = new Set(nodes.slice(0, 150).map((n) => n.id))
+  // ── Chat Sessions (Discussions) ────────────────────────────────────────────
+  for (const session of chatSessions) {
+    const sessionId = `chat_session:${session.id}`
+    const label = session.title || `Chat ${session.id.slice(0, 8)}`
+    addNode({
+      id: sessionId,
+      label: label.length > 30 ? label.slice(0, 29) + '…' : label,
+      type: 'chat_session',
+      data: {
+        model: session.model,
+        messageCount: session.message_count ?? 0,
+        totalCostUsd: session.total_cost_usd ?? 0,
+        energy: 0.4,
+      },
+      color: ENTITY_COLORS.chat_session,
+    })
+    links.push({ source: planId, target: sessionId, type: 'DISCUSSED' })
+  }
+
+  // ── Limit to ~200 nodes ──────────────────────────────────────────────────────
+  if (nodes.length > 200) {
+    const kept = new Set(nodes.slice(0, 200).map((n) => n.id))
     kept.add(planId) // always keep center
     return {
       nodes: nodes.filter((n) => kept.has(n.id)),
@@ -155,11 +209,133 @@ function buildPlanGraph(
   return { nodes, links }
 }
 
+// ── Build nodes/links for a single feature graph ─────────────────────────────
+// Returns additional nodes & links to merge into the base graph.
+// Links connect FG entities to existing base nodes when file paths match.
+
+export function buildFeatureGraphOverlay(
+  fg: FeatureGraphDetail,
+  planId: string,
+  existingNodeIds: Set<string>,
+): { nodes: UniverseNode[]; links: UniverseLink[] } {
+  const nodes: UniverseNode[] = []
+  const links: UniverseLink[] = []
+  const addedIds = new Set<string>()
+
+  // Build a suffix-matching index for file nodes in the base graph.
+  // FG entities may use absolute paths (/Users/.../src/foo.rs) while
+  // affected_files in tasks are often relative (src/foo.rs), or vice versa.
+  const existingFilePaths: string[] = []
+  for (const id of existingNodeIds) {
+    if (id.startsWith('file:')) existingFilePaths.push(id.slice(5))
+  }
+
+  /** Resolve a FG file entity_id to the matching base graph node ID (suffix match) */
+  function resolveFileNodeId(fgPath: string): string {
+    // Exact match first
+    if (existingNodeIds.has(`file:${fgPath}`)) return `file:${fgPath}`
+    // Suffix match: FG absolute → base relative, or base absolute → FG relative
+    const match = existingFilePaths.find((bp) =>
+      fgPath.endsWith(bp) || bp.endsWith(fgPath),
+    )
+    if (match) return `file:${match}`
+    // No match in base — use as-is
+    return `file:${fgPath}`
+  }
+
+  // Feature graph hub node
+  const fgId = `feature_graph:${fg.id}`
+  nodes.push({
+    id: fgId,
+    label: fg.name,
+    type: 'feature_graph',
+    data: {
+      description: fg.description,
+      entity_count: fg.entities?.length ?? fg.entity_count ?? 0,
+      energy: 0.7,
+    },
+    color: ENTITY_COLORS.feature_graph,
+  })
+  addedIds.add(fgId)
+  links.push({ source: planId, target: fgId, type: 'HAS_FEATURE_GRAPH' })
+
+  // Map from FG raw entity_id → resolved node ID (for relation linking later)
+  const entityIdMap = new Map<string, string>()
+
+  // FG entities → connect to existing file nodes or create new ones
+  for (const entity of fg.entities || []) {
+    const eType = entity.entity_type.toLowerCase()
+    if (eType === 'file' || eType === 'function') {
+      const entityNodeId = eType === 'file'
+        ? resolveFileNodeId(entity.entity_id)
+        : entity.entity_id
+
+      // Track mapping for relation resolution
+      entityIdMap.set(entity.entity_id, entityNodeId)
+
+      // If the node already exists in the base graph → just add a CONTAINS link
+      if (existingNodeIds.has(entityNodeId)) {
+        links.push({ source: fgId, target: entityNodeId, type: 'CONTAINS' })
+      } else if (!addedIds.has(entityNodeId)) {
+        // Create a new file node for entities not in the base graph
+        if (eType === 'file') {
+          const parts = entity.entity_id.split('/')
+          const fileName = entity.name || parts[parts.length - 1] || entity.entity_id
+          nodes.push({
+            id: entityNodeId,
+            label: fileName,
+            type: 'file',
+            data: { path: entity.entity_id, energy: 0.3 },
+            color: ENTITY_COLORS.file,
+          })
+          addedIds.add(entityNodeId)
+        } else {
+          // Function node
+          const funcName = entity.name || entity.entity_id.split('::').pop() || entity.entity_id
+          nodes.push({
+            id: entityNodeId,
+            label: funcName,
+            type: 'function',
+            data: { energy: 0.3 },
+            color: ENTITY_COLORS.function,
+          })
+          addedIds.add(entityNodeId)
+        }
+        links.push({ source: fgId, target: entityNodeId, type: 'CONTAINS' })
+      }
+    }
+  }
+
+  // Also link FG relations (if available) — cross-entity edges
+  // Note: backend returns capitalized Neo4j labels ("File", "Function") — normalize to lowercase
+  // Use entityIdMap to resolve FG raw IDs to actual node IDs (handles path suffix matching)
+  for (const rel of fg.relations || []) {
+    const rawSourceId = rel.source_type.toLowerCase() === 'file' ? `file:${rel.source_id}` : rel.source_id
+    const rawTargetId = rel.target_type.toLowerCase() === 'file' ? `file:${rel.target_id}` : rel.target_id
+    // Resolve via entityIdMap (suffix-matched), fallback to raw
+    const sourceId = entityIdMap.get(rel.source_id) ?? rawSourceId
+    const targetId = entityIdMap.get(rel.target_id) ?? rawTargetId
+    const bothExist =
+      (existingNodeIds.has(sourceId) || addedIds.has(sourceId)) &&
+      (existingNodeIds.has(targetId) || addedIds.has(targetId))
+    if (bothExist) {
+      links.push({ source: sourceId, target: targetId, type: rel.relation_type })
+    }
+  }
+
+  return { nodes, links }
+}
+
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
-export function usePlanUniverse(planId: string | undefined, planTitle?: string) {
-  const [nodes, setNodes] = useState<UniverseNode[]>([])
-  const [links, setLinks] = useState<UniverseLink[]>([])
+export function usePlanUniverse(
+  planId: string | undefined,
+  planTitle?: string,
+  projectSlug?: string,
+) {
+  const [baseNodes, setBaseNodes] = useState<UniverseNode[]>([])
+  const [baseLinks, setBaseLinks] = useState<UniverseLink[]>([])
+  const [featureGraphs, setFeatureGraphs] = useState<FeatureGraphDetail[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -178,8 +354,9 @@ export function usePlanUniverse(planId: string | undefined, planTitle?: string) 
       ])
 
       if (!graphData || (graphData.nodes || []).length === 0) {
-        setNodes([])
-        setLinks([])
+        setBaseNodes([])
+        setBaseLinks([])
+        setFeatureGraphs([])
         return
       }
 
@@ -191,21 +368,78 @@ export function usePlanUniverse(planId: string | undefined, planTitle?: string) 
       const allDecisions: Decision[] = rawTasks.flatMap((td) => td.decisions || [])
 
       const title = planTitle || (planResponse as unknown as { plan?: { title?: string } }).plan?.title || 'Plan'
+      const projectId = (planResponse as unknown as { plan?: { project_id?: string } }).plan?.project_id
 
-      const result = buildPlanGraph(planId, title, graphData, constraints, allDecisions, commits)
-      setNodes(result.nodes)
-      setLinks(result.links)
+      // Fetch feature graphs, chat sessions, and commit files in parallel (secondary data)
+      const [featureGraphDetails, chatSessions, commitFilesMap] = await Promise.all([
+        // Feature graphs: from DependencyGraph summaries OR from project
+        (async () => {
+          try {
+            const fgSummaries = graphData.feature_graphs || []
+            if (fgSummaries.length > 0) {
+              const details = await Promise.all(
+                fgSummaries.slice(0, 10).map((fg) => featureGraphsApi.get(fg.id).catch(() => null)),
+              )
+              return details.filter((d): d is FeatureGraphDetail => d !== null)
+            }
+            if (projectId) {
+              const fgList = await featureGraphsApi.list({ project_id: projectId })
+              const fgs = fgList.feature_graphs || []
+              if (fgs.length === 0) return []
+              const details = await Promise.all(
+                fgs.slice(0, 10).map((fg) => featureGraphsApi.get(fg.id).catch(() => null)),
+              )
+              return details.filter((d): d is FeatureGraphDetail => d !== null)
+            }
+            return []
+          } catch { return [] }
+        })(),
+        // Chat sessions: by project slug
+        (async () => {
+          if (!projectSlug) return []
+          try {
+            const result = await chatApi.listSessions({ project_slug: projectSlug, limit: 20 })
+            return result.items || []
+          } catch { return [] }
+        })(),
+        // Commit files: fetch TOUCHES for each commit (capped at 20 commits)
+        (async (): Promise<Map<string, string[]>> => {
+          const map = new Map<string, string[]>()
+          if (commits.length === 0) return map
+          try {
+            const results = await Promise.all(
+              commits.slice(0, 20).map(async (c) => {
+                try {
+                  const res = await commitsApi.getCommitFiles(c.sha)
+                  return { sha: c.sha, files: res.items.map((f) => f.file_path) }
+                } catch { return { sha: c.sha, files: [] } }
+              }),
+            )
+            for (const r of results) {
+              if (r.files.length > 0) map.set(r.sha, r.files)
+            }
+          } catch { /* ignore */ }
+          return map
+        })(),
+      ])
+
+      const result = buildBaseGraph(
+        planId, title, graphData, constraints, allDecisions, commits, chatSessions, commitFilesMap,
+      )
+      setBaseNodes(result.nodes)
+      setBaseLinks(result.links)
+      setFeatureGraphs(featureGraphDetails)
     } catch (err) {
       console.error('Failed to fetch plan universe:', err)
       setError('Failed to load plan universe')
     } finally {
       setIsLoading(false)
     }
-  }, [planId, planTitle])
+  }, [planId, planTitle, projectSlug])
 
   useEffect(() => {
     fetchUniverse()
   }, [fetchUniverse])
 
-  return { nodes, links, isLoading, error }
+  return { baseNodes, baseLinks, featureGraphs, isLoading, error }
 }

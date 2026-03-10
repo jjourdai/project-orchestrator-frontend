@@ -471,14 +471,14 @@ export function PlanDetailPage() {
                     : `${(graph.nodes || []).length} tasks · ${(graph.edges || []).length} dependencies`
                   }
                 </span>
-                {graph.feature_graphs && graph.feature_graphs.length > 0 && (
+                {graphViewMode !== '3d' && graph.feature_graphs && graph.feature_graphs.length > 0 && (
                   <>
                     <span className="text-gray-600">·</span>
                     {graph.feature_graphs.map((fg) => (
                       <Link
                         key={fg.id}
                         to={workspacePath(wsSlug, `/feature-graphs/${fg.id}`)}
-                        className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 transition-colors"
+                        className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded bg-fuchsia-500/10 text-fuchsia-400 hover:bg-fuchsia-500/20 transition-colors"
                       >
                         <Layers className="w-3 h-3" />
                         {fg.name}
@@ -492,7 +492,7 @@ export function PlanDetailPage() {
           <CardContent>
             {graphViewMode === '3d' ? (
               <React.Suspense fallback={<div className="flex items-center justify-center h-[400px]"><div className="text-gray-400 animate-pulse text-sm">Loading 3D...</div></div>}>
-                <PlanUniverse3D planId={plan.id} planTitle={plan.title} />
+                <PlanUniverse3D planId={plan.id} planTitle={plan.title} projectSlug={linkedProject?.slug} />
               </React.Suspense>
             ) : graphViewMode === 'waves' && waves ? (
               <WaveView data={waves} taskStatuses={taskStatusMap} planId={plan.id} planStatus={plan.status} />
