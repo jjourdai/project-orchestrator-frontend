@@ -1,10 +1,10 @@
-import { useEffect, useState, useCallback, useMemo, lazy, Suspense } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useParams, Link, useLocation } from 'react-router-dom'
 import { useAtomValue } from 'jotai'
-import { ClipboardList, FolderKanban, GitCommitHorizontal, Pencil, Box } from 'lucide-react'
-
-import { useTaskUniverse } from '@/components/universe'
-const Universe3DPanel = lazy(() => import('@/components/universe/Universe3DPanel'))
+import { ClipboardList, FolderKanban, GitCommitHorizontal, Pencil } from 'lucide-react'
+import { UnifiedGraphSection } from '@/components/graph/UnifiedGraphSection'
+import { TaskGraphAdapter } from '@/adapters/TaskGraphAdapter'
+import { useTaskGraphData } from '@/hooks/useTaskGraphData'
 import { Card, CardHeader, CardTitle, CardContent, LoadingPage, ErrorState, Badge, Button, ConfirmDialog, FormDialog, LinkEntityDialog, TaskStatusBadge, InteractiveStepStatusBadge, InteractiveDecisionStatusBadge, ProgressBar, PageHeader, StatusSelect, SectionNav, ViewToggle } from '@/components/ui'
 import type { ParentLink } from '@/components/ui/PageHeader'
 import { tasksApi, plansApi, projectsApi, decisionsApi } from '@/services'
@@ -58,8 +58,6 @@ export function TaskDetailPage() {
   const [blocking, setBlocking] = useState<Task[]>([])
   const [commits, setCommits] = useState<Commit[]>([])
   const [commitShaInput, setCommitShaInput] = useState('')
-  const [show3D, setShow3D] = useState(false)
-  const taskUniverse = useTaskUniverse(show3D ? taskId : undefined)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -67,6 +65,9 @@ export function TaskDetailPage() {
   const [parentPlanId, setParentPlanId] = useState<string | null>(null)
   const [parentPlanTitle, setParentPlanTitle] = useState<string | null>(null)
   const [parentProject, setParentProject] = useState<Project | null>(null)
+
+  // Task graph data for UnifiedGraphSection
+  const taskGraphData = useTaskGraphData(taskId, parentPlanId ?? undefined)
 
   const fetchData = useCallback(async () => {
     if (!taskId) return
@@ -262,6 +263,7 @@ export function TaskDetailPage() {
   const stepProgress = steps.length > 0 ? (completedSteps / steps.length) * 100 : 0
 
   const sections = [
+    { id: 'graph', label: 'Graph' },
     { id: 'steps', label: 'Steps', count: steps.length },
     { id: 'dependencies', label: 'Dependencies', count: blockers.length + blocking.length },
     { id: 'decisions', label: 'Decisions', count: decisions.length },
@@ -292,7 +294,7 @@ export function TaskDetailPage() {
       <PageHeader
         title={task.title || 'Task'}
         viewTransitionName={`task-title-${task.id}`}
-        description={show3D ? undefined : task.description}
+        description={task.description}
         parentLinks={parentLinks.length > 0 ? parentLinks : undefined}
         status={
           <StatusSelect
@@ -325,19 +327,13 @@ export function TaskDetailPage() {
           ...(task.actual_complexity ? [{ label: 'Actual complexity', value: String(task.actual_complexity) }] : []),
         ]}
         actions={
-          <div className="flex items-center gap-2">
-            {tags.length > 0 && (
-              <div className="flex flex-wrap gap-1">
-                {tags.map((tag, index) => (
-                  <Badge key={`${tag}-${index}`}>{tag}</Badge>
-                ))}
-              </div>
-            )}
-            <Button size="sm" variant={show3D ? 'primary' : 'secondary'} onClick={() => setShow3D(!show3D)}>
-              <Box className="w-3.5 h-3.5 mr-1.5" />
-              {show3D ? 'Description' : '3D View'}
-            </Button>
-          </div>
+          tags.length > 0 ? (
+            <div className="flex flex-wrap gap-1">
+              {tags.map((tag, index) => (
+                <Badge key={`${tag}-${index}`}>{tag}</Badge>
+              ))}
+            </div>
+          ) : undefined
         }
         overflowActions={[
           { label: 'Edit', onClick: () => editTaskDialog.open({ title: 'Edit Task' }) },
@@ -357,32 +353,20 @@ export function TaskDetailPage() {
         ]}
       />
 
-      {/* Inline 3D Universe View */}
-      {show3D && taskId && (
-        <Suspense fallback={
-          <div className="relative rounded-xl bg-[#0a0a0f] flex items-center justify-center" style={{ height: 500 }}>
-            <div className="text-gray-400 animate-pulse text-sm">Loading 3D engine...</div>
-          </div>
-        }>
-          <Universe3DPanel
-            nodes={taskUniverse.nodes}
-            links={taskUniverse.links}
-            isLoading={taskUniverse.isLoading}
-            error={taskUniverse.error}
-            onClose={() => setShow3D(false)}
-            centerType="task"
-            legend={[
-              { type: 'task', label: 'Task (center)' },
-              { type: 'step', label: 'Steps' },
-              { type: 'decision', label: 'Decisions' },
-              { type: 'file', label: 'Files' },
-              { type: 'commit', label: 'Commits' },
-            ]}
-          />
-        </Suspense>
-      )}
-
       <SectionNav sections={sections} activeSection={activeSection} />
+
+      {/* Graph — Task sub-graph with DAG/3D views */}
+      {taskGraphData.data && (
+        <section id="graph" className="scroll-mt-20">
+          <UnifiedGraphSection
+            adapter={TaskGraphAdapter}
+            data={taskGraphData.data}
+            title="Task Graph"
+            availableViews={['dag', '3d']}
+            defaultView="dag"
+          />
+        </section>
+      )}
 
       {/* Steps */}
       <section id="steps" className="scroll-mt-20">
@@ -653,6 +637,8 @@ export function TaskDetailPage() {
       </FormDialog>
       <LinkEntityDialog {...linkDialog.dialogProps} />
       <ConfirmDialog {...confirmDialog.dialogProps} />
+
+      {/* 3D view is now integrated inline via UnifiedGraphSection above */}
     </div>
   )
 }
