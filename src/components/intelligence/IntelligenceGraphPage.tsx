@@ -217,8 +217,8 @@ export default function IntelligenceGraphPage(props: IntelligenceGraphPageProps)
         <LiveIndicator connected={wsConnected} lastEventAt={lastEventAt} />
       </div>
 
-      {/* Controls (bottom-right): brightness slider + fullscreen */}
-      <div className="absolute bottom-3 right-3 z-40 flex items-end gap-1.5">
+      {/* Controls (bottom-right): brightness slider stacked above fullscreen */}
+      <div className="absolute bottom-3 right-3 z-40 flex flex-col items-center gap-1.5">
         {/* Brightness slider (vertical) */}
         <div className="flex flex-col items-center gap-1 bg-slate-800/90 backdrop-blur-sm rounded-lg border border-slate-700 p-1">
           <Sun size={11} className="text-slate-500 shrink-0" />
