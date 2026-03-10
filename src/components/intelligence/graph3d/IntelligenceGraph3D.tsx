@@ -789,6 +789,59 @@ export default function IntelligenceGraph3D({ nodes, edges, onNodeDoubleClick }:
     }
   }, [dimmedEntityTypes, highlightedGroup, legendHoveredType, hoveredProjectSlug, graphData.nodes, activationPhase])
 
+  // ── Spreading Activation — zoom camera to activated cluster ──────────────
+  const prevActivationPhaseRef = useRef<string>('idle')
+  useEffect(() => {
+    const fg = graphRef.current
+    if (!fg || typeof fg.cameraPosition !== 'function') return
+
+    // Zoom when transitioning into 'direct' phase (results just arrived)
+    const wasIdle = prevActivationPhaseRef.current === 'idle' || prevActivationPhaseRef.current === 'searching'
+    prevActivationPhaseRef.current = activationPhase
+
+    if (!wasIdle || (activationPhase !== 'direct' && activationPhase !== 'done')) return
+
+    const allActivated = new Set([...activation.directIds, ...activation.propagatedIds])
+    if (allActivated.size === 0) return
+
+    // Compute centroid of activated nodes
+    let cx = 0, cy = 0, cz = 0, count = 0
+    let maxDist = 0
+    const positions: { x: number; y: number; z: number }[] = []
+
+    for (const node of graphData.nodes) {
+      if (!allActivated.has(node.id)) continue
+      const x = node.x ?? 0
+      const y = node.y ?? 0
+      const z = node.z ?? 0
+      cx += x; cy += y; cz += z; count++
+      positions.push({ x, y, z })
+    }
+
+    if (count === 0) return
+    cx /= count; cy /= count; cz /= count
+
+    // Compute radius of the activated cluster
+    for (const p of positions) {
+      const d = Math.sqrt((p.x - cx) ** 2 + (p.y - cy) ** 2 + (p.z - cz) ** 2)
+      if (d > maxDist) maxDist = d
+    }
+
+    // Position camera at a distance proportional to cluster radius
+    const dist = Math.max(maxDist * 2.5, 120)
+    // Offset camera along a diagonal for better perspective
+    const angle = Math.atan2(cy, cx)
+    const camX = cx + dist * Math.cos(angle + 0.3)
+    const camY = cy + dist * 0.4
+    const camZ = cz + dist * Math.sin(angle + 0.3)
+
+    fg.cameraPosition(
+      { x: camX, y: camY, z: camZ }, // new position
+      { x: cx, y: cy, z: cz },       // lookAt
+      1200,                            // transition duration ms
+    )
+  }, [activationPhase, activation.directIds, activation.propagatedIds, graphData.nodes])
+
   // ── Selected node highlight — persistent emissive ring on click ─────────
   const prevSelectedRef = useRef<string | null>(null)
   useEffect(() => {
