@@ -65,9 +65,9 @@ let _currentConfig: QualityConfig = QUALITY_CONFIGS.full
 /** Call before rendering a batch of nodes to set quality based on count */
 export function setNodeQuality(nodeCount: number): void {
   const prev = _currentQuality
-  if (nodeCount < 150) _currentQuality = 'full'
-  else if (nodeCount < 400) _currentQuality = 'medium'
-  else if (nodeCount < 800) _currentQuality = 'low'
+  if (nodeCount < 100) _currentQuality = 'full'
+  else if (nodeCount < 250) _currentQuality = 'medium'
+  else if (nodeCount < 500) _currentQuality = 'low'
   else _currentQuality = 'minimal'
   _currentConfig = QUALITY_CONFIGS[_currentQuality]
 
@@ -527,11 +527,60 @@ function createGlowSprite(color: string, energy: number): THREE.Sprite {
 }
 
 // ── Central emoji sprite ─────────────────────────────────────────────────────
+// In full/medium mode: use SpriteText (rich, per-node texture — acceptable at low counts)
+// In low/minimal mode: use shared canvas texture per (emoji, energyBucket) combo
+// This limits total emoji textures to ~40 max instead of N.
 
-function createEmojiSprite(entityType: string, energy: number, status?: string): SpriteText {
+const emojiTextureCache = new Map<string, THREE.CanvasTexture>()
+const emojiMaterialCache = new Map<string, THREE.SpriteMaterial>()
+
+function createSharedEmojiSprite(entityType: string, energy: number, status?: string): THREE.Sprite {
+  const emoji = getStatusEmoji(entityType, status)
+  const energyBucket = energy > 0.7 ? 'hi' : energy > 0.3 ? 'mid' : 'lo'
+  const cacheKey = `${emoji}:${energyBucket}`
+
+  let texture = emojiTextureCache.get(cacheKey)
+  if (!texture) {
+    const size = 64
+    const canvas = document.createElement('canvas')
+    canvas.width = size
+    canvas.height = size
+    const ctx = canvas.getContext('2d')!
+
+    ctx.font = `${size * 0.7}px serif`
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(emoji, size / 2, size / 2)
+
+    texture = new THREE.CanvasTexture(canvas)
+    emojiTextureCache.set(cacheKey, texture)
+  }
+
+  let material = emojiMaterialCache.get(cacheKey)
+  if (!material) {
+    material = new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      depthWrite: false,
+    })
+    emojiMaterialCache.set(cacheKey, material)
+  }
+
+  const sprite = new THREE.Sprite(material)
+  const spriteSize = (8 + energy * 4) * _currentConfig.emojiScale
+  sprite.scale.set(spriteSize, spriteSize, 1)
+  return sprite
+}
+
+function createEmojiSprite(entityType: string, energy: number, status?: string): SpriteText | THREE.Sprite {
+  // For low/minimal quality: use shared texture (O(~40) textures instead of O(N))
+  if (_currentQuality === 'low' || _currentQuality === 'minimal') {
+    return createSharedEmojiSprite(entityType, energy, status)
+  }
+
+  // For full/medium: use SpriteText (richer rendering, acceptable at low node counts)
   const emoji = getStatusEmoji(entityType, status)
   const sprite = new SpriteText(emoji) as SpriteTextInstance
-  // Emoji is THE node — prominent size, scaled by energy
   sprite.textHeight = 8 + energy * 4  // 8 at rest → 12 at max energy
   sprite.backgroundColor = 'transparent'
   sprite.padding = [0, 0]
@@ -759,20 +808,20 @@ export function createNodeObject(node: Graph3DNode): THREE.Object3D {
   const hitbox = createHitboxSprite()
   group.add(hitbox)
 
-  // ── MINIMAL mode: dot + emoji only (shared textures, O(~15) GPU textures) ──
+  // ── MINIMAL mode: dot + shared emoji only (~55 GPU textures max) ──
   if (_currentQuality === 'minimal') {
     const dot = createDotSprite(color, energy)
     group.add(dot)
 
-    // Still show emoji — SpriteText uses a shared internal canvas, not 1 texture per node
+    // Shared emoji sprite — O(~40) textures total, not O(N)
     const emojiSprite = createEmojiSprite(entityType, energy, status)
-    emojiSprite.textHeight = (emojiSprite as SpriteTextInstance).textHeight * q.emojiScale
     group.add(emojiSprite)
 
     return group
   }
 
-  // ── Normal mode: full ring + label + optional features ──
+  // ── LOW mode: ring + label + shared emoji (~55 GPU textures for emojis) ──
+  // ── FULL/MEDIUM mode: ring + label + SpriteText emoji (N textures, OK at low counts) ──
   const subtitle = q.showSubtitle ? getNodeSubtitle(node) : undefined
   const progress = q.showProgress ? getNodeProgress(node) : undefined
 
@@ -788,9 +837,11 @@ export function createNodeObject(node: Graph3DNode): THREE.Object3D {
 
   // 3. Central emoji — THE primary visual element (on top), status-aware
   const emojiSprite = createEmojiSprite(entityType, energy, status)
-  // Apply quality-based emoji scaling
-  if (q.emojiScale !== 1.0) {
-    emojiSprite.textHeight = (emojiSprite as SpriteTextInstance).textHeight * q.emojiScale
+  // Apply quality-based emoji scaling (only for SpriteText in full/medium)
+  if (_currentQuality === 'full' || _currentQuality === 'medium') {
+    if (q.emojiScale !== 1.0) {
+      (emojiSprite as SpriteTextInstance).textHeight = (emojiSprite as SpriteTextInstance).textHeight * q.emojiScale
+    }
   }
   group.add(emojiSprite)
 
@@ -808,6 +859,10 @@ export function disposeNodeCaches(): void {
   dotTextureCache.clear()
   dotMaterialCache.forEach((mat) => mat.dispose())
   dotMaterialCache.clear()
+  emojiTextureCache.forEach((tex) => tex.dispose())
+  emojiTextureCache.clear()
+  emojiMaterialCache.forEach((mat) => mat.dispose())
+  emojiMaterialCache.clear()
   glowTextureCache.forEach((tex) => tex.dispose())
   glowTextureCache.clear()
   glowMaterialCache.forEach((mat) => mat.dispose())
