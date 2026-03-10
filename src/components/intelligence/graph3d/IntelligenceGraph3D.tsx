@@ -24,6 +24,7 @@ import {
   legendHoveredTypeAtom,
   hoveredProjectSlugAtom,
   highlightedGroupAtom,
+  graphBrightnessAtom,
 } from '@/atoms/intelligence'
 import { activationStateAtom } from '../SpreadingActivation'
 import type { IntelligenceNode, IntelligenceEdge } from '@/types/intelligence'
@@ -98,6 +99,7 @@ export default function IntelligenceGraph3D({ nodes, edges }: IntelligenceGraph3
   const legendHoveredType = useAtomValue(legendHoveredTypeAtom)
   const hoveredProjectSlug = useAtomValue(hoveredProjectSlugAtom)
   const highlightedGroup = useAtomValue(highlightedGroupAtom)
+  const brightness = useAtomValue(graphBrightnessAtom)
 
   const { transformToGraph3D, savePositions } = useGraph3DLayout()
 
@@ -1010,6 +1012,44 @@ export default function IntelligenceGraph3D({ nodes, edges }: IntelligenceGraph3
       clearTimeout(timeout)
     }
   }, [configureScene])
+
+  // ── Brightness — modulate element luminosity (lights + sprite opacity) ──
+  useEffect(() => {
+    const fg = graphRef.current
+    if (!fg || typeof fg.scene !== 'function') return
+
+    const scene = fg.scene()
+    if (!scene) return
+
+    // Adjust light intensities: brightness 0→1 maps to dim→bright
+    // Ambient: 0.15 → 1.4, Directional: 0.1 → 0.8
+    const ambientIntensity = 0.15 + brightness * 1.25
+    const directionalIntensity = 0.1 + brightness * 0.7
+    scene.traverse((child: THREE.Object3D) => {
+      if (child instanceof THREE.AmbientLight) {
+        child.intensity = ambientIntensity
+      } else if (child instanceof THREE.DirectionalLight) {
+        child.intensity = directionalIntensity
+      }
+    })
+
+    // Modulate all sprite materials opacity: brightness 0→1 maps to 0.2→1.0
+    const spriteOpacity = 0.2 + brightness * 0.8
+    for (const node of graphData.nodes) {
+      const obj = (node as Graph3DNode & { __threeObj?: THREE.Object3D }).__threeObj
+      if (!obj) continue
+      obj.traverse((child) => {
+        if (child instanceof THREE.Sprite && child.material) {
+          const mat = child.material as THREE.SpriteMaterial
+          // Don't override hitbox sprites (near-zero opacity)
+          if (mat.opacity > 0.05) {
+            mat.opacity = Math.min(mat.opacity, spriteOpacity)
+            mat.needsUpdate = true
+          }
+        }
+      })
+    }
+  }, [brightness, graphData.nodes])
 
   // ── Force configuration ─────────────────────────────────────────────────
   useEffect(() => {

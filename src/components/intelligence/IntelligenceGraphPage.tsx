@@ -13,7 +13,7 @@ import {
   type NodeChange,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { Box, Grid3x3, Maximize, Minimize, PanelRightClose, PanelRightOpen, Search } from 'lucide-react'
+import { Box, Grid3x3, Maximize, Minimize, PanelRightClose, PanelRightOpen, Search, Sun } from 'lucide-react'
 
 import { intelligenceNodeTypes } from './nodes'
 import { intelligenceEdgeTypes } from './edges'
@@ -33,6 +33,7 @@ import {
   graphViewModeAtom,
   selectedNodeIdAtom,
   legendHoveredTypeAtom,
+  graphBrightnessAtom,
 } from '@/atoms/intelligence'
 import { ErrorState } from '@/components/ui/ErrorState'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -124,6 +125,7 @@ export default function IntelligenceGraphPage(props: IntelligenceGraphPageProps)
   const selectedNodeId = useAtomValue(selectedNodeIdAtom)
   const activation = useAtomValue(activationStateAtom)
   const setLegendHoveredType = useSetAtom(legendHoveredTypeAtom)
+  const [graphBrightness, setGraphBrightness] = useAtom(graphBrightnessAtom)
 
   const {
     nodes: layoutedNodes,
@@ -511,38 +513,67 @@ export default function IntelligenceGraphPage(props: IntelligenceGraphPageProps)
         <LiveIndicator connected={wsConnected} lastEventAt={lastEventAt} />
       </div>
 
-      {/* 2D/3D toggle + Fullscreen (bottom-right) */}
-      <div className="absolute bottom-3 right-3 z-40 flex items-center gap-1 bg-slate-800/90 backdrop-blur-sm rounded-lg border border-slate-700 p-0.5">
-        <button
-          onClick={() => setViewMode('2d')}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
-            viewMode === '2d'
-              ? 'bg-blue-600 text-white'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700/50'
-          }`}
-        >
-          <Grid3x3 size={13} />
-          2D
-        </button>
-        <button
-          onClick={() => setViewMode('3d')}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
-            viewMode === '3d'
-              ? 'bg-blue-600 text-white'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700/50'
-          }`}
-        >
-          <Box size={13} />
-          3D
-        </button>
-        <div className="w-px h-5 bg-slate-700 mx-0.5" />
-        <button
-          onClick={toggleFullscreen}
-          className="flex items-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-700/50 transition-colors"
-          title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-        >
-          {isFullscreen ? <Minimize size={13} /> : <Maximize size={13} />}
-        </button>
+      {/* Controls (bottom-right): brightness slider + 2D/3D toggle + fullscreen */}
+      <div className="absolute bottom-3 right-3 z-40 flex items-end gap-1.5">
+        {/* Brightness slider (vertical, only in 3D mode) */}
+        {viewMode === '3d' && (
+          <div className="flex flex-col items-center gap-1 bg-slate-800/90 backdrop-blur-sm rounded-lg border border-slate-700 p-1">
+            <Sun size={11} className="text-slate-500 shrink-0" />
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={graphBrightness}
+              onChange={(e) => setGraphBrightness(parseFloat(e.target.value))}
+              className="graph-brightness-slider"
+              title={`Brightness: ${Math.round(graphBrightness * 100)}%`}
+              style={{
+                writingMode: 'vertical-lr',
+                direction: 'rtl',
+                width: '14px',
+                height: '80px',
+                appearance: 'none',
+                WebkitAppearance: 'none',
+                background: 'transparent',
+                cursor: 'pointer',
+              }}
+            />
+          </div>
+        )}
+        {/* 2D/3D toggle + Fullscreen */}
+        <div className="flex items-center gap-1 bg-slate-800/90 backdrop-blur-sm rounded-lg border border-slate-700 p-0.5">
+          <button
+            onClick={() => setViewMode('2d')}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
+              viewMode === '2d'
+                ? 'bg-blue-600 text-white'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700/50'
+            }`}
+          >
+            <Grid3x3 size={13} />
+            2D
+          </button>
+          <button
+            onClick={() => setViewMode('3d')}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
+              viewMode === '3d'
+                ? 'bg-blue-600 text-white'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700/50'
+            }`}
+          >
+            <Box size={13} />
+            3D
+          </button>
+          <div className="w-px h-5 bg-slate-700 mx-0.5" />
+          <button
+            onClick={toggleFullscreen}
+            className="flex items-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-700/50 transition-colors"
+            title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+          >
+            {isFullscreen ? <Minimize size={13} /> : <Maximize size={13} />}
+          </button>
+        </div>
       </div>
 
       {/* Bottom-left section: loading progress + entity legend */}

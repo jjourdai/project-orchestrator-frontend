@@ -187,6 +187,9 @@ export const coChangeThresholdAtom = atom<number>(1)
 /** Community hulls toggle — show/hide convex hull overlays in 3D view */
 export const showCommunityHullsAtom = atom<boolean>(false)
 
+/** Graph brightness (0→1) — controls ambient light intensity + background luminance */
+export const graphBrightnessAtom = atom<number>(0.5)
+
 /** Communities from the backend graph response */
 export const intelligenceCommunitiesAtom = atom<BackendGraphCommunity[]>([])
 
