@@ -14,6 +14,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { useSetAtom, useAtomValue } from 'jotai'
 import { Network, Eye } from 'lucide-react'
+import { Graph3DErrorBoundary } from '@/components/ui/Graph3DErrorBoundary'
 
 import { usePlanUniverse, buildFeatureGraphOverlay } from './usePlanUniverse'
 import { selectedNodeIdAtom, intelligenceNodesAtom, selectedNodeAtom, highlightedGroupAtom } from '@/atoms/intelligence'
@@ -373,16 +374,18 @@ export function PlanUniverse3D({ planId, planTitle, projectSlug }: PlanUniverse3
 
   return (
     <div className="relative w-full h-[500px] rounded-lg overflow-hidden bg-[#0a0a0f]">
-      <Suspense fallback={
-        <div className="flex items-center justify-center h-full">
-          <div className="text-gray-400 animate-pulse text-sm">Loading 3D engine...</div>
-        </div>
-      }>
-        <IntelligenceGraph3D
-          nodes={intelligenceNodes}
-          edges={intelligenceEdges}
-        />
-      </Suspense>
+      <Graph3DErrorBoundary context="Plan Universe">
+        <Suspense fallback={
+          <div className="flex items-center justify-center h-full">
+            <div className="text-gray-400 animate-pulse text-sm">Loading 3D engine...</div>
+          </div>
+        }>
+          <IntelligenceGraph3D
+            nodes={intelligenceNodes}
+            edges={intelligenceEdges}
+          />
+        </Suspense>
+      </Graph3DErrorBoundary>
 
       {/* Feature Graph toggles — top-left overlay */}
       {featureGraphs.length > 0 && (

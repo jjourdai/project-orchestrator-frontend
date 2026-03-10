@@ -18,6 +18,7 @@ import {
 } from '@/atoms/intelligence'
 import { ErrorState } from '@/components/ui/ErrorState'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { Graph3DErrorBoundary } from '@/components/ui/Graph3DErrorBoundary'
 import type { IntelligenceLayer } from '@/types/intelligence'
 
 // ── Entity legend ──────────────────────────────────────────────────────────
@@ -161,16 +162,18 @@ export default function WorkspaceGraphPage({ workspaceSlug, embedded }: Workspac
       <SpreadingActivation projectSlug={undefined} />
 
       {/* ── Canvas: 3D only ────────────────────────────────────────────── */}
-      <Suspense fallback={
-        <div className="absolute inset-0 flex items-center justify-center bg-slate-950">
-          <div className="text-slate-500 text-sm flex items-center gap-2">
-            <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-            Loading 3D engine...
+      <Graph3DErrorBoundary context="Workspace Graph">
+        <Suspense fallback={
+          <div className="absolute inset-0 flex items-center justify-center bg-slate-950">
+            <div className="text-slate-500 text-sm flex items-center gap-2">
+              <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+              Loading 3D engine...
+            </div>
           </div>
-        </div>
-      }>
-        <IntelligenceGraph3D nodes={layoutedNodes} edges={edges} />
-      </Suspense>
+        }>
+          <IntelligenceGraph3D nodes={layoutedNodes} edges={edges} />
+        </Suspense>
+      </Graph3DErrorBoundary>
 
       {/* ── Overlay states ── */}
       {showError && (
