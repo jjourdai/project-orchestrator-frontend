@@ -2,8 +2,8 @@
 // 3D Node Objects — Custom Three.js shapes per entity type
 // ============================================================================
 //
-// Each entity type gets a distinctive 3D shape + billboard label.
-// High-energy nodes (notes, skills) get a glow halo.
+// Each entity type gets a distinctive 3D shape + emoji + billboard label.
+// Energy is reflected in: shape size, glow intensity, emissive brightness.
 //
 // IMPORTANT: Geometries and materials are cached/shared to avoid creating
 // hundreds of unique WebGL shader programs which exhausts the GL context
@@ -17,6 +17,37 @@ import type { Graph3DNode } from './useGraph3DLayout'
 
 // SpriteText extends Sprite extends Object3D — has .position
 type SpriteTextInstance = SpriteText & THREE.Object3D
+
+// ── Entity emojis ──────────────────────────────────────────────────────────────
+
+const ENTITY_EMOJIS: Record<string, string> = {
+  // Code layer
+  file: '📄',
+  function: '⚡',
+  struct: '🏗️',
+  trait: '🧬',
+  enum: '📋',
+  // PM layer
+  plan: '🎯',
+  task: '✅',
+  step: '👣',
+  milestone: '🏁',
+  release: '🚀',
+  commit: '💾',
+  // Knowledge layer
+  note: '📝',
+  decision: '⚖️',
+  constraint: '🛡️',
+  // Skills layer
+  skill: '🧠',
+  // Behavioral layer
+  protocol: '🔄',
+  protocol_state: '⭕',
+  // Chat layer
+  chat_session: '💬',
+  // Feature graph
+  feature_graph: '🔮',
+}
 
 // ── Cached geometries (one per entity type) ────────────────────────────────────
 
@@ -69,20 +100,28 @@ function getGeometry(entityType: string): THREE.BufferGeometry {
 const materialCache = new Map<string, THREE.MeshLambertMaterial>()
 
 function getMaterial(entityType: string, color: string, energy: number): THREE.MeshLambertMaterial {
-  // Cache key includes entity type only — energy variation handled via emissiveIntensity clone
-  // For perf, we bucket energy into 3 levels to limit material variants
-  const energyBucket = energy > 0.7 ? 'high' : energy > 0.3 ? 'mid' : 'low'
+  // 5 energy buckets for smoother visual gradation
+  const energyBucket = energy > 0.8 ? 'max' : energy > 0.6 ? 'high' : energy > 0.4 ? 'mid' : energy > 0.2 ? 'low' : 'dim'
   const cacheKey = `${entityType}:${energyBucket}`
 
   let mat = materialCache.get(cacheKey)
   if (!mat) {
-    const emissiveIntensity = energyBucket === 'high' ? 0.36 : energyBucket === 'mid' ? 0.24 : 0.15
+    const emissiveIntensity =
+      energyBucket === 'max' ? 0.5 :
+      energyBucket === 'high' ? 0.36 :
+      energyBucket === 'mid' ? 0.24 :
+      energyBucket === 'low' ? 0.15 : 0.08
+    const opacity =
+      energyBucket === 'max' ? 1.0 :
+      energyBucket === 'high' ? 0.95 :
+      energyBucket === 'mid' ? 0.9 :
+      energyBucket === 'low' ? 0.8 : 0.6
     mat = new THREE.MeshLambertMaterial({
       color: new THREE.Color(color),
       emissive: new THREE.Color(color),
       emissiveIntensity,
       transparent: true,
-      opacity: 0.9,
+      opacity,
     })
     materialCache.set(cacheKey, mat)
   }
@@ -155,6 +194,18 @@ function createLabel(text: string, color: string): SpriteText {
   return sprite
 }
 
+// ── Emoji sprite ──────────────────────────────────────────────────────────────
+
+function createEmojiSprite(entityType: string, energy: number): SpriteText {
+  const emoji = ENTITY_EMOJIS[entityType] ?? '❓'
+  const sprite = new SpriteText(emoji) as SpriteTextInstance
+  sprite.textHeight = 5 + energy * 3  // bigger emoji for higher energy
+  sprite.backgroundColor = 'transparent'
+  sprite.padding = [0, 0]
+  sprite.position.y = 10  // above the shape
+  return sprite
+}
+
 // ── Main factory ──────────────────────────────────────────────────────────────
 
 export function createNodeObject(node: Graph3DNode): THREE.Object3D {
@@ -165,18 +216,25 @@ export function createNodeObject(node: Graph3DNode): THREE.Object3D {
   const energy = (node.data.energy as number) ?? 0
 
   // 1. Main shape (shared geometry + shared material)
+  //    Energy scales the mesh: low energy = small, high energy = big
   const geometry = getGeometry(entityType)
   const material = getMaterial(entityType, color, energy)
   const mesh = new THREE.Mesh(geometry, material)
+  const energyScale = 0.7 + energy * 0.6  // 0.7x at 0 energy → 1.3x at 1.0
+  mesh.scale.setScalar(energyScale)
   group.add(mesh)
 
-  // 2. Glow halo for high-energy nodes (energy > 0.5)
-  if (energy > 0.5) {
+  // 2. Glow halo — visible from energy > 0.3 (not just > 0.5)
+  if (energy > 0.3) {
     const glow = createGlowSprite(color, energy)
     group.add(glow)
   }
 
-  // 3. Billboard label
+  // 3. Emoji above the shape
+  const emojiSprite = createEmojiSprite(entityType, energy)
+  group.add(emojiSprite)
+
+  // 4. Billboard label below
   const label = createLabel(node.label, color)
   group.add(label)
 
