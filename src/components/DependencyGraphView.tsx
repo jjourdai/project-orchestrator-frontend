@@ -60,7 +60,6 @@ interface TaskNodeData extends Record<string, unknown> {
   hasConflicts?: boolean
   /** Active agent info (from real-time tracking) */
   activeAgent?: ActiveAgentInfo | null
-  affectedFiles?: string[]
   onSelect?: (taskId: string) => void
   onDoubleClick?: (taskId: string) => void
 }
@@ -1047,7 +1046,7 @@ export function DependencyGraphView({ graph, taskStatuses, onNodeSelect, onNodeD
           stepCount: liveProgress?.stepCount ?? node.step_count ?? node.stepCount ?? 0,
           completedStepCount: liveProgress?.completedStepCount ?? node.completed_step_count ?? node.completedStepCount ?? 0,
           assignedTo: node.assigned_to ?? node.assignedTo,
-          affectedFiles: node.affected_files,
+          affectedFiles: node.affected_files ?? node.affectedFiles,
           noteCount: node.note_count ?? 0,
           decisionCount: node.decision_count ?? 0,
           steps: mergedSteps,
@@ -1058,7 +1057,6 @@ export function DependencyGraphView({ graph, taskStatuses, onNodeSelect, onNodeD
           hasConflicts: conflictFilesArr.length > 0,
           conflictFiles: conflictFilesArr,
           activeAgent: node.activeAgent,
-          affectedFiles: node.affectedFiles,
           onSelect: onNodeSelect,
           onDoubleClick: onNodeDoubleClick,
         },
