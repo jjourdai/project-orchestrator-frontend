@@ -42,6 +42,24 @@ export default defineConfig({
         target: 'http://localhost:8080',
         changeOrigin: true,
         ws: true,
+        configure: (proxy) => {
+          // Silence ECONNRESET errors when the backend restarts
+          // or WebSocket connections drop during development
+          proxy.on('error', (err, _req, res) => {
+            if ((err as NodeJS.ErrnoException).code === 'ECONNRESET') return
+            console.error('[vite] ws proxy error:', err.message)
+            if (res && 'writeHead' in res && !res.headersSent) {
+              ;(res as import('http').ServerResponse).writeHead(502)
+              ;(res as import('http').ServerResponse).end('Bad Gateway')
+            }
+          })
+          proxy.on('proxyReqWs', (_proxyReq, _req, socket) => {
+            socket.on('error', (err) => {
+              if ((err as NodeJS.ErrnoException).code === 'ECONNRESET') return
+              console.error('[vite] ws socket error:', err.message)
+            })
+          })
+        },
       },
     },
   },
