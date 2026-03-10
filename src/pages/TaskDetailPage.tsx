@@ -1,13 +1,13 @@
-import { useEffect, useState, useCallback, useMemo, lazy, Suspense } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useParams, Link, useLocation } from 'react-router-dom'
 import { useAtomValue } from 'jotai'
-import { ClipboardList, FolderKanban, GitCommitHorizontal, Pencil, Box } from 'lucide-react'
-
-import { useTaskUniverse } from '@/components/universe'
-const Universe3DPanel = lazy(() => import('@/components/universe/Universe3DPanel'))
+import { ClipboardList, Flag, FolderKanban, GitCommitHorizontal, Pencil } from 'lucide-react'
+import { UnifiedGraphSection, type GraphBreadcrumb } from '@/components/graph/UnifiedGraphSection'
+import { TaskGraphAdapter } from '@/adapters/TaskGraphAdapter'
+import { useTaskGraphData } from '@/hooks/useTaskGraphData'
 import { Card, CardHeader, CardTitle, CardContent, LoadingPage, ErrorState, Badge, Button, ConfirmDialog, FormDialog, LinkEntityDialog, TaskStatusBadge, InteractiveStepStatusBadge, InteractiveDecisionStatusBadge, ProgressBar, PageHeader, StatusSelect, SectionNav, ViewToggle } from '@/components/ui'
 import type { ParentLink } from '@/components/ui/PageHeader'
-import { tasksApi, plansApi, projectsApi, decisionsApi } from '@/services'
+import { tasksApi, plansApi, projectsApi, workspacesApi, decisionsApi } from '@/services'
 import { useConfirmDialog, useFormDialog, useLinkDialog, useToast, useSectionObserver, useWorkspaceSlug, useViewTransition, useViewMode } from '@/hooks'
 import { workspacePath } from '@/utils/paths'
 import { taskRefreshAtom, projectRefreshAtom, planRefreshAtom } from '@/atoms'
@@ -58,8 +58,6 @@ export function TaskDetailPage() {
   const [blocking, setBlocking] = useState<Task[]>([])
   const [commits, setCommits] = useState<Commit[]>([])
   const [commitShaInput, setCommitShaInput] = useState('')
-  const [show3D, setShow3D] = useState(false)
-  const taskUniverse = useTaskUniverse(show3D ? taskId : undefined)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -67,6 +65,28 @@ export function TaskDetailPage() {
   const [parentPlanId, setParentPlanId] = useState<string | null>(null)
   const [parentPlanTitle, setParentPlanTitle] = useState<string | null>(null)
   const [parentProject, setParentProject] = useState<Project | null>(null)
+  const [parentMilestone, setParentMilestone] = useState<{ id: string; title: string; type: 'workspace' | 'project' } | null>(null)
+
+  // Task graph data for UnifiedGraphSection
+  const taskGraphData = useTaskGraphData(taskId, parentPlanId ?? undefined)
+
+  // Breadcrumb trail for graph section — full ascending path: milestone → plan → task
+  const graphBreadcrumbs = useMemo<GraphBreadcrumb[]>(() => {
+    const crumbs: GraphBreadcrumb[] = []
+    if (parentMilestone) {
+      const msPath = parentMilestone.type === 'project'
+        ? `/project-milestones/${parentMilestone.id}#graph`
+        : `/milestones/${parentMilestone.id}#graph`
+      crumbs.push({ label: `Milestone: ${parentMilestone.title}`, href: workspacePath(wsSlug, msPath) })
+    }
+    if (parentPlanId && parentPlanTitle) {
+      crumbs.push({ label: `Plan: ${parentPlanTitle}`, href: workspacePath(wsSlug, `/plans/${parentPlanId}#graph`) })
+    }
+    if (task) {
+      crumbs.push({ label: `Task: ${task.title || task.id.slice(0, 8)}` })
+    }
+    return crumbs
+  }, [parentMilestone, parentPlanId, parentPlanTitle, task, wsSlug])
 
   const fetchData = useCallback(async () => {
     if (!taskId) return
@@ -150,6 +170,45 @@ export function TaskDetailPage() {
 
       if (controller.signal.aborted) return
       setParentProject(project)
+
+      // 3. Resolve milestone — find if this plan belongs to a milestone
+      if (planId) {
+        try {
+          // Check workspace milestones
+          const wsMilestones = await workspacesApi.listMilestones(wsSlug, { limit: 100 })
+          for (const ms of wsMilestones.items || []) {
+            try {
+              const detail = await workspacesApi.getMilestone(ms.id)
+              if (Array.isArray(detail.plans) && detail.plans.some((p: { id: string }) => p.id === planId)) {
+                if (!controller.signal.aborted) {
+                  setParentMilestone({ id: detail.id, title: detail.title, type: 'workspace' })
+                }
+                return
+              }
+            } catch { /* skip */ }
+          }
+
+          // Check project milestones
+          const planData = (await plansApi.get(planId)) as unknown as { plan?: { project_id?: string } }
+          const projId = planData.plan?.project_id || (planData as unknown as { project_id?: string }).project_id
+          if (projId) {
+            try {
+              const projMilestones = await projectsApi.listMilestones(projId, { limit: 100 })
+              for (const ms of projMilestones.items || []) {
+                try {
+                  const detail = await projectsApi.getMilestone(ms.id)
+                  if (Array.isArray(detail.plans) && detail.plans.some((p: { id: string }) => p.id === planId)) {
+                    if (!controller.signal.aborted) {
+                      setParentMilestone({ id: detail.milestone.id, title: detail.milestone.title, type: 'project' })
+                    }
+                    return
+                  }
+                } catch { /* skip */ }
+              }
+            } catch { /* graceful degradation */ }
+          }
+        } catch { /* graceful degradation */ }
+      }
     }
 
     resolveParents()
@@ -262,14 +321,26 @@ export function TaskDetailPage() {
   const stepProgress = steps.length > 0 ? (completedSteps / steps.length) * 100 : 0
 
   const sections = [
+    { id: 'graph', label: 'Graph' },
     { id: 'steps', label: 'Steps', count: steps.length },
     { id: 'dependencies', label: 'Dependencies', count: blockers.length + blocking.length },
     { id: 'decisions', label: 'Decisions', count: decisions.length },
     { id: 'commits', label: 'Commits', count: commits.length },
   ]
 
-  // Build parent links for navigation
+  // Build parent links for navigation — ascending: milestone → project → plan
   const parentLinks: ParentLink[] = []
+  if (parentMilestone) {
+    const msPath = parentMilestone.type === 'project'
+      ? `/project-milestones/${parentMilestone.id}`
+      : `/milestones/${parentMilestone.id}`
+    parentLinks.push({
+      icon: Flag,
+      label: parentMilestone.type === 'project' ? 'Project Milestone' : 'Milestone',
+      name: parentMilestone.title,
+      href: workspacePath(wsSlug, msPath),
+    })
+  }
   if (parentProject) {
     parentLinks.push({
       icon: FolderKanban,
@@ -292,7 +363,7 @@ export function TaskDetailPage() {
       <PageHeader
         title={task.title || 'Task'}
         viewTransitionName={`task-title-${task.id}`}
-        description={show3D ? undefined : task.description}
+        description={task.description}
         parentLinks={parentLinks.length > 0 ? parentLinks : undefined}
         status={
           <StatusSelect
@@ -325,19 +396,13 @@ export function TaskDetailPage() {
           ...(task.actual_complexity ? [{ label: 'Actual complexity', value: String(task.actual_complexity) }] : []),
         ]}
         actions={
-          <div className="flex items-center gap-2">
-            {tags.length > 0 && (
-              <div className="flex flex-wrap gap-1">
-                {tags.map((tag, index) => (
-                  <Badge key={`${tag}-${index}`}>{tag}</Badge>
-                ))}
-              </div>
-            )}
-            <Button size="sm" variant={show3D ? 'primary' : 'secondary'} onClick={() => setShow3D(!show3D)}>
-              <Box className="w-3.5 h-3.5 mr-1.5" />
-              {show3D ? 'Description' : '3D View'}
-            </Button>
-          </div>
+          tags.length > 0 ? (
+            <div className="flex flex-wrap gap-1">
+              {tags.map((tag, index) => (
+                <Badge key={`${tag}-${index}`}>{tag}</Badge>
+              ))}
+            </div>
+          ) : undefined
         }
         overflowActions={[
           { label: 'Edit', onClick: () => editTaskDialog.open({ title: 'Edit Task' }) },
@@ -357,32 +422,22 @@ export function TaskDetailPage() {
         ]}
       />
 
-      {/* Inline 3D Universe View */}
-      {show3D && taskId && (
-        <Suspense fallback={
-          <div className="relative rounded-xl bg-[#0a0a0f] flex items-center justify-center" style={{ height: 500 }}>
-            <div className="text-gray-400 animate-pulse text-sm">Loading 3D engine...</div>
-          </div>
-        }>
-          <Universe3DPanel
-            nodes={taskUniverse.nodes}
-            links={taskUniverse.links}
-            isLoading={taskUniverse.isLoading}
-            error={taskUniverse.error}
-            onClose={() => setShow3D(false)}
-            centerType="task"
-            legend={[
-              { type: 'task', label: 'Task (center)' },
-              { type: 'step', label: 'Steps' },
-              { type: 'decision', label: 'Decisions' },
-              { type: 'file', label: 'Files' },
-              { type: 'commit', label: 'Commits' },
-            ]}
-          />
-        </Suspense>
-      )}
-
       <SectionNav sections={sections} activeSection={activeSection} />
+
+      {/* Graph — Task sub-graph with DAG/3D views */}
+      {taskGraphData.data && (
+        <section id="graph" className="scroll-mt-20">
+          <UnifiedGraphSection
+            adapter={TaskGraphAdapter}
+            data={taskGraphData.data}
+            title="Task Graph"
+            availableViews={['dag', '3d']}
+            defaultView="dag"
+            breadcrumbs={graphBreadcrumbs}
+            projectSlug={parentProject?.slug}
+          />
+        </section>
+      )}
 
       {/* Steps */}
       <section id="steps" className="scroll-mt-20">
@@ -653,6 +708,8 @@ export function TaskDetailPage() {
       </FormDialog>
       <LinkEntityDialog {...linkDialog.dialogProps} />
       <ConfirmDialog {...confirmDialog.dialogProps} />
+
+      {/* 3D view is now integrated inline via UnifiedGraphSection above */}
     </div>
   )
 }
