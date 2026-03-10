@@ -1042,6 +1042,19 @@ export interface DependencyGraphStep {
   verification?: string
 }
 
+/** Discussed file in chat sessions linked to a task */
+export interface DiscussedFile {
+  file_path: string
+  mention_count: number
+}
+
+/** Feature graph summary for dependency graph response */
+export interface FeatureGraphSummary {
+  id: string
+  name: string
+  entity_count: number
+}
+
 export interface DependencyGraphNode {
   id: string
   title?: string
@@ -1067,6 +1080,14 @@ export interface DependencyGraphNode {
   completedStepCount?: number
   /** Assigned to (legacy alias) */
   assignedTo?: string
+  /** Number of chat sessions linked to this task */
+  session_count?: number
+  /** Number of currently active (streaming) sessions */
+  active_session_count?: number
+  /** Total child sessions (sub-discussions) */
+  child_session_count?: number
+  /** Files discussed in linked chat sessions */
+  discussed_files?: DiscussedFile[]
 }
 
 export interface DependencyGraphEdge {
@@ -1085,6 +1106,8 @@ export interface DependencyGraph {
   edges: DependencyGraphEdge[]
   /** File conflicts between tasks */
   conflicts?: FileConflict[]
+  /** Feature graphs linked to the plan's project */
+  feature_graphs?: FeatureGraphSummary[]
 }
 
 // ============================================================================

@@ -12,7 +12,7 @@ import {
 } from '@xyflow/react'
 import dagre from 'dagre'
 import { Link } from 'react-router-dom'
-import { AlertTriangle, FileCode2, StickyNote, BookOpen, ExternalLink, CheckCircle2, Circle, Loader2, SkipForward } from 'lucide-react'
+import { AlertTriangle, FileCode2, StickyNote, BookOpen, ExternalLink, CheckCircle2, Circle, Loader2, SkipForward, MessageSquare, FileSearch } from 'lucide-react'
 import { PulseIndicator } from '@/components/ui'
 import { useWorkspaceSlug } from '@/hooks'
 import { workspacePath } from '@/utils/paths'
@@ -47,6 +47,12 @@ interface TaskNodeData extends Record<string, unknown> {
   decisionCount?: number
   /** Individual step details from backend */
   steps?: DependencyGraphStep[]
+  /** Chat sessions linked to this task */
+  sessionCount?: number
+  activeSessionCount?: number
+  childSessionCount?: number
+  /** Files discussed in linked sessions */
+  discussedFiles?: Array<{ file_path: string; mention_count: number }>
   /** Files that conflict with other tasks */
   conflictFiles?: string[]
   hasConflicts?: boolean
@@ -109,9 +115,26 @@ const BASE_NODE_HEIGHT = 80  // without steps
 const STEP_ROW_HEIGHT = 18   // each step row
 const MAX_VISIBLE_STEPS = 6  // cap to prevent huge nodes
 
-function computeNodeHeight(stepCount: number): number {
+const MAX_VISIBLE_FILES = 4
+const FILE_ROW_HEIGHT = 14
+
+function computeNodeHeight(stepCount: number, sessionCount = 0, discussedFileCount = 0): number {
   const visibleSteps = Math.min(stepCount, MAX_VISIBLE_STEPS)
-  return BASE_NODE_HEIGHT + (visibleSteps > 0 ? 8 + visibleSteps * STEP_ROW_HEIGHT + (stepCount > MAX_VISIBLE_STEPS ? 14 : 0) : 0)
+  let height = BASE_NODE_HEIGHT
+  // Steps section
+  if (visibleSteps > 0) {
+    height += 8 + visibleSteps * STEP_ROW_HEIGHT + (stepCount > MAX_VISIBLE_STEPS ? 14 : 0)
+  }
+  // Sessions row (if any)
+  if (sessionCount > 0) {
+    height += 16
+  }
+  // Discussed files section (only when few steps)
+  if (discussedFileCount > 0 && stepCount <= 3) {
+    const visibleFiles = Math.min(discussedFileCount, MAX_VISIBLE_FILES)
+    height += 4 + visibleFiles * FILE_ROW_HEIGHT + (discussedFileCount > MAX_VISIBLE_FILES ? 12 : 0)
+  }
+  return height
 }
 
 function getLayoutedElements(
@@ -125,7 +148,9 @@ function getLayoutedElements(
 
   nodes.forEach((node) => {
     const stepCount = node.data.steps?.length ?? node.data.stepCount ?? 0
-    g.setNode(node.id, { width: NODE_WIDTH, height: computeNodeHeight(stepCount) })
+    const sessionCount = node.data.sessionCount ?? 0
+    const discussedFileCount = node.data.discussedFiles?.length ?? 0
+    g.setNode(node.id, { width: NODE_WIDTH, height: computeNodeHeight(stepCount, sessionCount, discussedFileCount) })
   })
 
   edges.forEach((edge) => {
@@ -162,6 +187,10 @@ function TaskNodeComponent({ data }: NodeProps<Node<TaskNodeData>>) {
   const hasConflicts = data.hasConflicts ?? false
   const conflictFiles = data.conflictFiles ?? []
   const steps = data.steps ?? []
+  const sessionCount = data.sessionCount ?? 0
+  const activeSessionCount = data.activeSessionCount ?? 0
+  const childSessionCount = data.childSessionCount ?? 0
+  const discussedFiles = data.discussedFiles ?? []
 
   const handleClick = useCallback(
     (e: MouseEvent) => {
@@ -236,6 +265,16 @@ function TaskNodeComponent({ data }: NodeProps<Node<TaskNodeData>>) {
                 {decisionCount}
               </span>
             )}
+            {sessionCount > 0 && (
+              <span className={`inline-flex items-center gap-0.5 text-[9px] ${activeSessionCount > 0 ? 'text-green-400' : 'text-cyan-400/70'}`}
+                title={`${sessionCount} session${sessionCount > 1 ? 's' : ''}${childSessionCount > 0 ? ` · ${childSessionCount} sub` : ''}${activeSessionCount > 0 ? ' · active' : ''}`}
+              >
+                {activeSessionCount > 0 && <PulseIndicator variant="active" size={4} />}
+                <MessageSquare className="w-2.5 h-2.5" />
+                {sessionCount}
+                {childSessionCount > 0 && <span className="text-[8px] text-gray-500">+{childSessionCount}</span>}
+              </span>
+            )}
 
             {data.priority != null && data.priority > 0 && (
               <span className="text-[9px] text-gray-500">P{data.priority}</span>
@@ -291,7 +330,28 @@ function TaskNodeComponent({ data }: NodeProps<Node<TaskNodeData>>) {
           </div>
         )}
 
-        {/* Row 4: Affected files (compact, only if no steps or few steps) */}
+        {/* Row 4: Discussed files (from chat sessions, only when few steps) */}
+        {discussedFiles.length > 0 && steps.length <= 3 && (
+          <div className="flex flex-wrap gap-0.5 mt-1">
+            {discussedFiles.slice(0, MAX_VISIBLE_FILES).map((f) => (
+              <span
+                key={f.file_path}
+                className="inline-flex items-center gap-0.5 text-[8px] px-1 py-0.5 rounded bg-cyan-500/10 text-cyan-400/80"
+                title={`${f.file_path} (${f.mention_count}×)`}
+              >
+                <FileSearch className="w-2 h-2" />
+                {f.file_path.split('/').pop()}
+              </span>
+            ))}
+            {discussedFiles.length > MAX_VISIBLE_FILES && (
+              <span className="text-[8px] text-gray-600 px-0.5">
+                +{discussedFiles.length - MAX_VISIBLE_FILES}
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Row 5: Affected files (compact, only if no steps or few steps) */}
         {files.length > 0 && steps.length <= 3 && (
           <div className="flex flex-wrap gap-0.5 mt-1">
             {files.slice(0, 3).map((file) => (
@@ -691,6 +751,10 @@ export function DependencyGraphView({ graph, taskStatuses, onNodeSelect, classNa
           noteCount: node.note_count ?? 0,
           decisionCount: node.decision_count ?? 0,
           steps: mergedSteps,
+          sessionCount: node.session_count ?? 0,
+          activeSessionCount: node.active_session_count ?? 0,
+          childSessionCount: node.child_session_count ?? 0,
+          discussedFiles: node.discussed_files ?? [],
           hasConflicts: conflictFilesArr.length > 0,
           conflictFiles: conflictFilesArr,
           onSelect: onNodeSelect,
