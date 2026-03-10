@@ -12,7 +12,7 @@ import {
 } from '@xyflow/react'
 import dagre from 'dagre'
 import { Link } from 'react-router-dom'
-import { AlertTriangle, FileCode2, StickyNote, BookOpen, ExternalLink, CheckCircle2, Circle, Loader2, SkipForward, MessageSquare, FileSearch, Clock, Bot } from 'lucide-react'
+import { AlertTriangle, FileCode2, StickyNote, BookOpen, ExternalLink, CheckCircle2, Circle, Loader2, SkipForward, MessageSquare, FileSearch, Clock, Ban, XCircle, Bot } from 'lucide-react'
 import { PulseIndicator } from '@/components/ui'
 import { useWorkspaceSlug } from '@/hooks'
 import { workspacePath } from '@/utils/paths'
@@ -30,6 +30,8 @@ export interface DependencyGraphViewProps {
   taskStatuses?: Map<string, TaskStatus>
   /** Callback when a node is clicked (opens task drawer) */
   onNodeSelect?: (taskId: string) => void
+  /** Callback when a node is double-clicked (fractal drill-down). Receives the FractalNode id (e.g. "task:uuid") */
+  onNodeDoubleClick?: (nodeId: string) => void
   className?: string
 }
 
@@ -58,8 +60,8 @@ interface TaskNodeData extends Record<string, unknown> {
   hasConflicts?: boolean
   /** Active agent info (from real-time tracking) */
   activeAgent?: ActiveAgentInfo | null
-  affectedFiles?: string[]
   onSelect?: (taskId: string) => void
+  onDoubleClick?: (taskId: string) => void
 }
 
 // ============================================================================
@@ -116,6 +118,23 @@ function StepIcon({ status }: { status: string }) {
       return <SkipForward className="w-3 h-3 text-yellow-400 flex-shrink-0" />
     default:
       return <Circle className="w-3 h-3 text-gray-600 flex-shrink-0" />
+  }
+}
+
+// ── Task status icon (replaces the 7px dot with a meaningful icon) ───────────
+
+function TaskStatusIcon({ status }: { status: TaskStatus }) {
+  switch (status) {
+    case 'completed':
+      return <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" style={{ color: statusColors.completed.dot }} />
+    case 'in_progress':
+      return <Loader2 className="w-3.5 h-3.5 flex-shrink-0 animate-spin" style={{ color: statusColors.in_progress.dot }} />
+    case 'blocked':
+      return <Ban className="w-3.5 h-3.5 flex-shrink-0" style={{ color: statusColors.blocked.dot }} />
+    case 'failed':
+      return <XCircle className="w-3.5 h-3.5 flex-shrink-0" style={{ color: statusColors.failed.dot }} />
+    default: // pending
+      return <Clock className="w-3.5 h-3.5 flex-shrink-0" style={{ color: statusColors.pending.dot }} />
   }
 }
 
@@ -346,6 +365,14 @@ function TaskNodeComponent({ data }: NodeProps<Node<TaskNodeData>>) {
     [data],
   )
 
+  const handleDoubleClick = useCallback(
+    (e: MouseEvent) => {
+      e.stopPropagation()
+      data.onDoubleClick?.(data.taskId)
+    },
+    [data],
+  )
+
   return (
     <div
       className="relative"
@@ -357,6 +384,7 @@ function TaskNodeComponent({ data }: NodeProps<Node<TaskNodeData>>) {
 
       <div
         onClick={handleClick}
+        onDoubleClick={handleDoubleClick}
         className={`cursor-pointer transition-all duration-150 hover:scale-[1.02] hover:shadow-lg ${isInProgress ? 'dep-node-pulse' : ''}`}
         style={{
           background: colors.bg,
@@ -369,22 +397,16 @@ function TaskNodeComponent({ data }: NodeProps<Node<TaskNodeData>>) {
       >
         <Handle type="target" position={Position.Top} style={{ background: colors.border, width: 8, height: 8 }} />
 
-        {/* Row 1: Status dot + label + agent indicator + priority + conflict */}
+        {/* Row 1: Status icon + label + agent indicator + priority + conflict */}
         <div className="flex items-center gap-1.5 mb-1">
-          <div
-            className={isInProgress ? 'pulse-indicator relative inline-flex shrink-0' : 'inline-flex shrink-0'}
-            style={{ width: 7, height: 7 }}
-          >
+          <div className={isInProgress ? 'pulse-indicator relative inline-flex shrink-0' : 'inline-flex shrink-0'}>
             {isInProgress && (
               <span
-                className="pulse-ring absolute inset-0 rounded-full opacity-75"
+                className="pulse-ring absolute inset-[-3px] rounded-full opacity-40"
                 style={{ background: colors.dot }}
               />
             )}
-            <span
-              className="relative inline-flex rounded-full"
-              style={{ background: colors.dot, width: 7, height: 7, borderRadius: '50%', flexShrink: 0 }}
-            />
+            <TaskStatusIcon status={data.status} />
           </div>
           <span className="text-[10px] font-medium" style={{ color: colors.text }}>
             {statusLabels[data.status]}
@@ -927,7 +949,7 @@ export function TaskDrawer({ taskId, onClose, onOpenFullPage }: TaskDrawerProps)
 // MAIN COMPONENT
 // ============================================================================
 
-export function DependencyGraphView({ graph, taskStatuses, onNodeSelect, className = '' }: DependencyGraphViewProps) {
+export function DependencyGraphView({ graph, taskStatuses, onNodeSelect, onNodeDoubleClick, className = '' }: DependencyGraphViewProps) {
   // Local status overrides from CrudEvents (real-time)
   const [liveStatuses, setLiveStatuses] = useState<Map<string, TaskStatus>>(new Map())
   // Live step updates from CrudEvents (real-time step status changes)
@@ -1024,7 +1046,7 @@ export function DependencyGraphView({ graph, taskStatuses, onNodeSelect, classNa
           stepCount: liveProgress?.stepCount ?? node.step_count ?? node.stepCount ?? 0,
           completedStepCount: liveProgress?.completedStepCount ?? node.completed_step_count ?? node.completedStepCount ?? 0,
           assignedTo: node.assigned_to ?? node.assignedTo,
-          affectedFiles: node.affected_files,
+          affectedFiles: node.affected_files ?? node.affectedFiles,
           noteCount: node.note_count ?? 0,
           decisionCount: node.decision_count ?? 0,
           steps: mergedSteps,
@@ -1035,8 +1057,8 @@ export function DependencyGraphView({ graph, taskStatuses, onNodeSelect, classNa
           hasConflicts: conflictFilesArr.length > 0,
           conflictFiles: conflictFilesArr,
           activeAgent: node.activeAgent,
-          affectedFiles: node.affectedFiles,
           onSelect: onNodeSelect,
+          onDoubleClick: onNodeDoubleClick,
         },
       }
     })
@@ -1074,7 +1096,7 @@ export function DependencyGraphView({ graph, taskStatuses, onNodeSelect, classNa
     const calculatedHeight = Math.max(400, Math.min(1200, maxBottom + 80))
 
     return { layoutedNodes: ln, layoutedEdges: le, graphHeight: calculatedHeight }
-  }, [graph, taskStatuses, liveStatuses, liveStepUpdates, liveStepProgress, conflictLookup, onNodeSelect])
+  }, [graph, taskStatuses, liveStatuses, liveStepUpdates, liveStepProgress, conflictLookup, onNodeSelect, onNodeDoubleClick])
 
   if (layoutedNodes.length === 0) {
     return <p className="text-gray-500 text-sm">No tasks to display</p>
