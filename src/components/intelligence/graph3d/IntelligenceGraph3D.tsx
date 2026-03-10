@@ -1013,43 +1013,22 @@ export default function IntelligenceGraph3D({ nodes, edges }: IntelligenceGraph3
     }
   }, [configureScene])
 
-  // ── Brightness — modulate element luminosity (lights + sprite opacity) ──
+  // ── Brightness — renderer toneMappingExposure (affects entire render output) ──
   useEffect(() => {
     const fg = graphRef.current
-    if (!fg || typeof fg.scene !== 'function') return
+    if (!fg) return
 
-    const scene = fg.scene()
-    if (!scene) return
-
-    // Adjust light intensities: brightness 0→1 maps to dim→bright
-    // Ambient: 0.15 → 1.4, Directional: 0.1 → 0.8
-    const ambientIntensity = 0.15 + brightness * 1.25
-    const directionalIntensity = 0.1 + brightness * 0.7
-    scene.traverse((child: THREE.Object3D) => {
-      if (child instanceof THREE.AmbientLight) {
-        child.intensity = ambientIntensity
-      } else if (child instanceof THREE.DirectionalLight) {
-        child.intensity = directionalIntensity
-      }
-    })
-
-    // Modulate all sprite materials opacity: brightness 0→1 maps to 0.2→1.0
-    const spriteOpacity = 0.2 + brightness * 0.8
-    for (const node of graphData.nodes) {
-      const obj = (node as Graph3DNode & { __threeObj?: THREE.Object3D }).__threeObj
-      if (!obj) continue
-      obj.traverse((child) => {
-        if (child instanceof THREE.Sprite && child.material) {
-          const mat = child.material as THREE.SpriteMaterial
-          // Don't override hitbox sprites (near-zero opacity)
-          if (mat.opacity > 0.05) {
-            mat.opacity = Math.min(mat.opacity, spriteOpacity)
-            mat.needsUpdate = true
-          }
+    try {
+      if (typeof fg.renderer === 'function') {
+        const renderer = fg.renderer() as THREE.WebGLRenderer | undefined
+        if (renderer) {
+          // exposure 0→1 maps to 0.05→5.0 (very wide range for dramatic effect)
+          renderer.toneMapping = THREE.ReinhardToneMapping
+          renderer.toneMappingExposure = 0.05 + brightness * 4.95
         }
-      })
-    }
-  }, [brightness, graphData.nodes])
+      }
+    } catch { /* renderer may not be ready */ }
+  }, [brightness])
 
   // ── Force configuration ─────────────────────────────────────────────────
   useEffect(() => {
