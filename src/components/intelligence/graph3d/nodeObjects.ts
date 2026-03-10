@@ -27,6 +27,61 @@ import type { Graph3DNode } from './useGraph3DLayout'
 // SpriteText extends Sprite extends Object3D — has .position
 type SpriteTextInstance = SpriteText & THREE.Object3D
 
+// ── Dynamic LOD — quality scaling based on node count ────────────────────────
+// Prevents GPU memory exhaustion on large graphs.
+// Each 512px canvas = ~1MB VRAM. 1000 unique textures = ~1GB → WebGL context lost.
+//
+// Quality levels:
+//   full    (<150 nodes): 512px canvas, subtitle, glow, progress arc
+//   medium  (<400 nodes): 256px canvas, subtitle, no glow, progress arc
+//   low     (<800 nodes): 256px canvas, no subtitle, no glow, no progress
+//   minimal (≥800 nodes): 128px canvas, no subtitle, no glow, no progress, truncated labels
+
+export type QualityLevel = 'full' | 'medium' | 'low' | 'minimal'
+
+interface QualityConfig {
+  canvasSize: number
+  maxLabelLen: number
+  showSubtitle: boolean
+  showGlow: boolean
+  showProgress: boolean
+  showWorkingBadge: boolean
+  emojiScale: number       // multiplier on emoji textHeight
+  ringScale: number        // multiplier on ring sprite size
+  fontSize: number         // arc text font size
+  subFontSize: number      // subtitle arc font size
+}
+
+const QUALITY_CONFIGS: Record<QualityLevel, QualityConfig> = {
+  full:    { canvasSize: 512, maxLabelLen: 32, showSubtitle: true,  showGlow: true,  showProgress: true,  showWorkingBadge: true,  emojiScale: 1.0,  ringScale: 1.0,  fontSize: 28, subFontSize: 22 },
+  medium:  { canvasSize: 256, maxLabelLen: 24, showSubtitle: true,  showGlow: false, showProgress: true,  showWorkingBadge: true,  emojiScale: 0.9,  ringScale: 0.85, fontSize: 14, subFontSize: 11 },
+  low:     { canvasSize: 256, maxLabelLen: 18, showSubtitle: false, showGlow: false, showProgress: false, showWorkingBadge: false, emojiScale: 0.8,  ringScale: 0.75, fontSize: 13, subFontSize: 10 },
+  minimal: { canvasSize: 128, maxLabelLen: 12, showSubtitle: false, showGlow: false, showProgress: false, showWorkingBadge: false, emojiScale: 0.7,  ringScale: 0.65, fontSize: 9,  subFontSize: 8  },
+}
+
+let _currentQuality: QualityLevel = 'full'
+let _currentConfig: QualityConfig = QUALITY_CONFIGS.full
+
+/** Call before rendering a batch of nodes to set quality based on count */
+export function setNodeQuality(nodeCount: number): void {
+  const prev = _currentQuality
+  if (nodeCount < 150) _currentQuality = 'full'
+  else if (nodeCount < 400) _currentQuality = 'medium'
+  else if (nodeCount < 800) _currentQuality = 'low'
+  else _currentQuality = 'minimal'
+  _currentConfig = QUALITY_CONFIGS[_currentQuality]
+
+  // If quality downgraded, clear caches to free GPU memory (old hi-res textures)
+  if (prev !== _currentQuality) {
+    disposeNodeCaches()
+  }
+}
+
+/** Get current quality level (for debug/UI) */
+export function getNodeQuality(): QualityLevel {
+  return _currentQuality
+}
+
 // ── Entity emojis — status-aware ─────────────────────────────────────────────
 // Entities with lifecycle statuses get different emojis per state.
 // The default (no status or unknown status) falls back to the base emoji.
@@ -211,21 +266,24 @@ function createRingLabelSprite(
   progress?: NodeProgress,
   status?: string,
 ): THREE.Sprite {
-  const maxLen = 32
-  const maxSubLen = 28
+  const q = _currentConfig
+  const maxLen = q.maxLabelLen
+  const maxSubLen = Math.max(8, maxLen - 4)
   const displayText = text.length > maxLen ? text.slice(0, maxLen - 1) + '\u2026' : text
-  const displaySub = subtitle
+  const displaySub = (q.showSubtitle && subtitle)
     ? (subtitle.length > maxSubLen ? subtitle.slice(0, maxSubLen - 1) + '\u2026' : subtitle)
     : undefined
+  const effectiveProgress = q.showProgress ? progress : undefined
+  const effectiveWorking = q.showWorkingBadge && status === 'in_progress'
   const opacityBucket = energy > 0.7 ? 'bright' : energy > 0.3 ? 'mid' : 'dim'
-  const progressRatio = progress && progress.total > 0 ? progress.completed / progress.total : -1
+  const progressRatio = effectiveProgress && effectiveProgress.total > 0 ? effectiveProgress.completed / effectiveProgress.total : -1
   const progressBucket = progressRatio >= 0 ? Math.round(progressRatio * 20) / 20 : -1 // 5% steps
-  const isWorking = status === 'in_progress'
-  const cacheKey = `${displayText}:${displaySub ?? ''}:${color}:${opacityBucket}:${progressBucket}:${isWorking ? 'w' : ''}`
+  const isWorking = effectiveWorking
+  const cacheKey = `${_currentQuality}:${displayText}:${displaySub ?? ''}:${color}:${opacityBucket}:${progressBucket}:${isWorking ? 'w' : ''}`
 
   let texture = ringLabelTextureCache.get(cacheKey)
   if (!texture) {
-    const size = 512
+    const size = q.canvasSize
     const canvas = document.createElement('canvas')
     canvas.width = size
     canvas.height = size
@@ -233,14 +291,15 @@ function createRingLabelSprite(
 
     const cx = size / 2
     const cy = size / 2
+    const scale = size / 512 // proportional scaling for different canvas sizes
     const ringRadius = size * 0.36
-    const ringWidth = opacityBucket === 'bright' ? 6 : opacityBucket === 'mid' ? 5 : 3
+    const ringWidth = (opacityBucket === 'bright' ? 6 : opacityBucket === 'mid' ? 5 : 3) * scale
     const ringAlpha = opacityBucket === 'bright' ? 0.9 : opacityBucket === 'mid' ? 0.65 : 0.4
 
     // ── Draw ring border ──
     if (progressRatio >= 0) {
       // Progress mode: background track (dim) + progress fill arc
-      const progressArcWidth = ringWidth + 4
+      const progressArcWidth = ringWidth + 4 * scale
       const startAngle = -Math.PI / 2 // 12 o'clock
 
       // Background track — full circle, dim
@@ -286,7 +345,7 @@ function createRingLabelSprite(
       const badgeAngle = -Math.PI / 4 // 1:30 position
       const bx = cx + ringRadius * Math.cos(badgeAngle)
       const by = cy + ringRadius * Math.sin(badgeAngle)
-      const badgeR = 14
+      const badgeR = 14 * scale
 
       // Pulsing dot background
       ctx.beginPath()
@@ -323,20 +382,20 @@ function createRingLabelSprite(
     ctx.globalAlpha = 1.0
 
     // ── Primary text: bottom arc (just outside the ring) ──
-    const textRadius = ringRadius + 18
+    const textRadius = ringRadius + 18 * scale
     drawTextOnArc(
       ctx, displayText, cx, cy, textRadius,
-      28, '#e2e8f0', 0.85,
+      q.fontSize, '#e2e8f0', 0.85,
       Math.PI / 2,  // bottom center
       false,         // normal orientation
     )
 
     // ── Subtitle: top arc (just outside the ring, reads left-to-right) ──
     if (displaySub) {
-      const subRadius = ringRadius + 16
+      const subRadius = ringRadius + 16 * scale
       drawTextOnArc(
         ctx, displaySub, cx, cy, subRadius,
-        22, '#94a3b8', 0.6,
+        q.subFontSize, '#94a3b8', 0.6,
         -Math.PI / 2,  // top center
         true,           // flipped for top readability
       )
@@ -360,7 +419,7 @@ function createRingLabelSprite(
 
   const sprite = new THREE.Sprite(material)
   // Scale proportional to ring — energy gives a subtle breathing effect
-  const spriteSize = 22 + energy * 4
+  const spriteSize = (22 + energy * 4) * _currentConfig.ringScale
   sprite.scale.set(spriteSize, spriteSize, 1)
   return sprite
 }
@@ -631,20 +690,21 @@ function getNodeProgress(node: Graph3DNode): NodeProgress | undefined {
 
 export function createNodeObject(node: Graph3DNode): THREE.Object3D {
   const group = new THREE.Group()
+  const q = _currentConfig
 
   const entityType = node.entityType
   const color = ENTITY_COLORS[entityType as keyof typeof ENTITY_COLORS] ?? '#6B7280'
   const energy = (node.data.energy as number) ?? 0
   const status = node.data.status as string | undefined
-  const subtitle = getNodeSubtitle(node)
-  const progress = getNodeProgress(node)
+  const subtitle = q.showSubtitle ? getNodeSubtitle(node) : undefined
+  const progress = q.showProgress ? getNodeProgress(node) : undefined
 
   // 0. Invisible hitbox — ensures the node is easy to click/hover
   const hitbox = createHitboxSprite()
   group.add(hitbox)
 
-  // 1. Glow halo (behind everything) — only for energy > 0.4
-  if (energy > 0.4) {
+  // 1. Glow halo (behind everything) — only for high quality + energy > 0.4
+  if (q.showGlow && energy > 0.4) {
     const glow = createGlowSprite(color, energy)
     group.add(glow)
   }
@@ -655,6 +715,10 @@ export function createNodeObject(node: Graph3DNode): THREE.Object3D {
 
   // 3. Central emoji — THE primary visual element (on top), status-aware
   const emojiSprite = createEmojiSprite(entityType, energy, status)
+  // Apply quality-based emoji scaling
+  if (q.emojiScale !== 1.0) {
+    emojiSprite.textHeight = (emojiSprite as SpriteTextInstance).textHeight * q.emojiScale
+  }
   group.add(emojiSprite)
 
   return group

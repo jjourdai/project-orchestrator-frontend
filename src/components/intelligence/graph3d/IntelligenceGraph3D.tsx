@@ -12,7 +12,7 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import * as THREE from 'three'
 
 import { useGraph3DLayout, type Graph3DNode, type Graph3DLink } from './useGraph3DLayout'
-import { createNodeObject, disposeNodeCaches } from './nodeObjects'
+import { createNodeObject, disposeNodeCaches, setNodeQuality } from './nodeObjects'
 import { buildCommunityHulls, disposeCommunityHulls, type CommunityHullGroup } from './CommunityHulls3D'
 import { ENTITY_COLORS } from '@/constants/intelligence'
 import {
@@ -226,6 +226,11 @@ export default function IntelligenceGraph3D({ nodes, edges }: IntelligenceGraph3
     () => transformToGraph3D(nodes, edges),
     [nodes, edges, transformToGraph3D],
   )
+
+  // ── Dynamic LOD — adjust quality BEFORE nodeThreeObject runs ──────────
+  useMemo(() => {
+    setNodeQuality(graphData.nodes.length)
+  }, [graphData.nodes.length])
 
   // ── Control simulation based on relayout need ───────────────────────────
   // The ref methods (cooldownTicks, etc.) are only available after the
