@@ -440,6 +440,7 @@ export function PlanDetailPage() {
             defaultView="dag"
             onDrillDown={handleDrillDown}
             breadcrumbs={graphBreadcrumbs}
+            projectSlug={linkedProject?.slug}
           />
         </section>
       )}

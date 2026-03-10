@@ -434,6 +434,7 @@ export function TaskDetailPage() {
             availableViews={['dag', '3d']}
             defaultView="dag"
             breadcrumbs={graphBreadcrumbs}
+            projectSlug={parentProject?.slug}
           />
         </section>
       )}
