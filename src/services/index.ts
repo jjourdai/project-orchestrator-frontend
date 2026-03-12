@@ -19,6 +19,8 @@ export type { DiscussionNode, DiscussionNodeMetadata } from './discussions'
 export { ChatWebSocket } from './chatWebSocket'
 export { runnerApi, useRunnerStatus } from './runner'
 export type { RunSnapshot, ActiveAgentSnapshot, WaveSnapshot, AgentStatus } from './runner'
+export { protocolApi } from './protocolApi'
+export { rfcApi } from './rfcApi'
 export { EventBusClient, getEventBus } from './eventBus'
 export {
   forceLogout,

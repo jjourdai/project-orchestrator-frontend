@@ -33,6 +33,9 @@ import {
   SkillDetailPage,
   FeatureGraphsPage,
   FeatureGraphDetailPage,
+  ProtocolsPage,
+  ProtocolDetailPage,
+  RfcDetailPage,
   AdminPage,
   RunnerDashboard,
 
@@ -40,6 +43,7 @@ import {
   SettingsPage,
   SetupWizard,
 } from '@/pages'
+import { RfcDashboardPage } from '@/components/protocols'
 // Intelligence sub-views are now embedded inline in ProjectDetailPage (lazy-loaded there)
 
 /**
@@ -165,6 +169,10 @@ function App() {
                         <Route path="skills/:id" element={<SkillDetailPage />} />
                         <Route path="feature-graphs" element={<FeatureGraphsPage />} />
                         <Route path="feature-graphs/:id" element={<FeatureGraphDetailPage />} />
+                        <Route path="protocols" element={<ProtocolsPage />} />
+                        <Route path="protocols/:protocolId" element={<ProtocolDetailPage />} />
+                        <Route path="rfcs" element={<RfcDashboardPage />} />
+                        <Route path="rfcs/:rfcId" element={<RfcDetailPage />} />
                         {/* Intelligence sub-views are now embedded inline in ProjectDetailPage */}
                         <Route path="projects/:projectSlug/intelligence" element={<ProjectDetailPage />} />
                         <Route path="admin" element={<AdminPage />} />
