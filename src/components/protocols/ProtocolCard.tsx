@@ -7,6 +7,7 @@
 
 import { GitBranch, Circle, ArrowRightLeft, Tag } from 'lucide-react'
 import { Card, CardContent, Badge } from '@/components/ui'
+import { FsmMiniMap } from './FsmMiniMap'
 import type { Protocol, ProtocolStatus } from '@/types/protocol'
 
 // ---------------------------------------------------------------------------
@@ -79,6 +80,15 @@ export function ProtocolCard({ protocol, onClick }: ProtocolCardProps) {
             </span>
           )}
         </div>
+
+        {/* FSM Mini-map — lazy-loaded from protocol detail if states not pre-loaded */}
+        <FsmMiniMap
+          protocolId={protocol.id}
+          states={protocol.states}
+          transitions={protocol.transitions}
+          height={100}
+          className="rounded-lg border border-white/[0.04] bg-white/[0.02] -mx-0.5"
+        />
 
         {/* Tags */}
         {protocol.tags && protocol.tags.length > 0 && (

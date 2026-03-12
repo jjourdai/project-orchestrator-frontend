@@ -15,6 +15,7 @@ import { RefreshCw } from 'lucide-react'
 import { protocolApi, workspacesApi } from '@/services'
 import { ProtocolCard } from '@/components/protocols/ProtocolCard'
 import { ScheduledActionsPanel } from '@/components/protocols/ScheduledActionsPanel'
+import { RecentRunsPanel } from '@/components/protocols/RecentRunsPanel'
 import {
   PageShell,
   Button,
@@ -31,9 +32,10 @@ import type { Protocol, ProtocolStatus } from '@/types/protocol'
 // Filter config
 // ---------------------------------------------------------------------------
 
-type StatusTab = 'all' | ProtocolStatus | 'scheduled'
+type StatusTab = 'all' | ProtocolStatus | 'scheduled' | 'activity'
 
 const statusTabs: { value: StatusTab; label: string }[] = [
+  { value: 'activity', label: 'FSM Activity' },
   { value: 'scheduled', label: 'Scheduled' },
   { value: 'all', label: 'All' },
   { value: 'draft', label: 'Draft' },
@@ -75,7 +77,7 @@ export function ProtocolsPage() {
   const [, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [statusFilter, setStatusFilter] = useState<StatusTab>('scheduled')
+  const [statusFilter, setStatusFilter] = useState<StatusTab>('activity')
   const [refreshKey, setRefreshKey] = useState(0)
 
   // ── Fetch ────────────────────────────────────────────────────────────
@@ -90,7 +92,7 @@ export function ProtocolsPage() {
     try {
       const res = await protocolApi.listProtocols({
         project_id: activeProjectId,
-        status: statusFilter !== 'all' && statusFilter !== 'scheduled' ? statusFilter : undefined,
+        status: statusFilter !== 'all' && statusFilter !== 'scheduled' && statusFilter !== 'activity' ? statusFilter : undefined,
         limit: 100,
         offset: 0,
       })
@@ -111,6 +113,10 @@ export function ProtocolsPage() {
   const handleRefresh = () => setRefreshKey((k) => k + 1)
 
   const handleCardClick = (protocolId: string) => {
+    navigate(workspacePath(wsSlug, `/protocols/${protocolId}`))
+  }
+
+  const handleRunClick = (protocolId: string, _runId: string) => {
     navigate(workspacePath(wsSlug, `/protocols/${protocolId}`))
   }
 
@@ -168,6 +174,11 @@ export function ProtocolsPage() {
             <SkeletonCard key={i} lines={3} />
           ))}
         </div>
+      ) : statusFilter === 'activity' ? (
+        <RecentRunsPanel
+          protocols={protocols}
+          onRunClick={handleRunClick}
+        />
       ) : statusFilter === 'scheduled' ? (
         <ScheduledActionsPanel
           protocols={protocols}
