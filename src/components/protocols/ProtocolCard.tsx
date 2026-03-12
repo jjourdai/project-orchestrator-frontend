@@ -50,7 +50,7 @@ export function ProtocolCard({ protocol, onClick }: ProtocolCardProps) {
         <div className="flex items-start justify-between gap-2 mb-2">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 mb-0.5">
-              <span className={`w-2 h-2 rounded-full shrink-0 ${statusDotColor[protocol.status]}`} />
+              <span className={`w-2 h-2 rounded-full shrink-0 ${statusDotColor[protocol.status ?? 'active']}`} />
               <h3 className="text-sm font-semibold text-gray-100 truncate">{protocol.name}</h3>
             </div>
             {protocol.description && (
@@ -58,7 +58,7 @@ export function ProtocolCard({ protocol, onClick }: ProtocolCardProps) {
             )}
           </div>
           <span className="text-[10px] font-medium uppercase tracking-wider text-gray-500 shrink-0 mt-0.5">
-            {statusLabel[protocol.status]}
+            {statusLabel[protocol.status ?? 'active']}
           </span>
         </div>
 

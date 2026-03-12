@@ -33,12 +33,23 @@ export interface Protocol {
   id: string
   name: string
   description?: string
-  status: ProtocolStatus
-  states: ProtocolState[]
-  transitions: ProtocolTransition[]
+  status?: ProtocolStatus
+  /** Populated by GET /protocols/:id (ProtocolDetail), absent in list responses */
+  states?: ProtocolState[]
+  /** Populated by GET /protocols/:id (ProtocolDetail), absent in list responses */
+  transitions?: ProtocolTransition[]
+  /** Protocol category: 'system' | 'business' */
+  protocol_category?: string
+  /** Trigger mode: 'manual' | 'auto' | 'scheduled' | 'event' */
+  trigger_mode?: string
+  /** Trigger configuration (cron expression, webhook URL, event pattern, etc.) */
+  trigger_config?: Record<string, unknown>
+  /** ISO timestamp of the last automatic trigger */
+  last_triggered_at?: string
   created_at: string
   updated_at?: string
-  tags: string[]
+  /** Optional — not returned by the backend currently */
+  tags?: string[]
 }
 
 // ---------------------------------------------------------------------------
@@ -51,14 +62,28 @@ export interface ProtocolRun {
   id: string
   protocol_id: string
   protocol_name?: string
-  current_state_id: string
+  /** Backend field name is `current_state` (UUID) */
+  current_state: string
+  /** Resolved client-side or by enriched endpoints */
   current_state_name?: string
   status: RunStatus
   parent_run_id?: string | null
-  parent_state_id?: string | null
+  plan_id?: string | null
+  task_id?: string | null
   started_at: string
   completed_at?: string | null
-  metadata?: Record<string, unknown>
+  error?: string | null
+  states_visited?: StateVisit[]
+  /** How this run was triggered */
+  triggered_by?: string
+}
+
+export interface StateVisit {
+  state_id: string
+  state_name?: string
+  trigger?: string
+  entered_at: string
+  exited_at?: string | null
 }
 
 export interface RunStateHistory {
@@ -72,12 +97,16 @@ export interface RunStateHistory {
 
 export interface RunNode {
   id: string
-  protocol_name: string
-  current_state_name: string
+  protocol_id: string
+  protocol_name?: string
+  current_state: string
+  current_state_name?: string
   status: RunStatus
   started_at: string
   completed_at?: string | null
-  state_history: RunStateHistory[]
+  states_visited?: StateVisit[]
+  /** @deprecated alias kept for backward compat */
+  state_history?: RunStateHistory[]
   children: RunNode[]
 }
 

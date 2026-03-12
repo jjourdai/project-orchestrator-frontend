@@ -35,11 +35,11 @@ export interface RunStateHistoryEntry {
 export interface RunNode {
   id: string
   protocol_id?: string
-  protocol_name: string
+  protocol_name?: string
   parent_run_id?: string | null
   status: RunStatus
   current_state?: string | null
-  states_visited?: number
+  states_visited?: number | Array<{ state_name?: string }>
   started_at: string
   completed_at?: string | null
   /** @deprecated alias kept for backwards compat */
@@ -159,7 +159,7 @@ function RunTreeNode({ node, depth, onRunClick, selectedRunId }: RunTreeNodeProp
 
         {/* Protocol name */}
         <span className={`text-sm font-medium truncate flex-1 min-w-0 ${isSelected ? 'text-gray-100' : 'text-gray-300 group-hover:text-gray-200'}`}>
-          {node.protocol_name}
+          {node.protocol_name ?? 'Run'}
           {node.current_state && (
             <span className="ml-1.5 text-[11px] text-gray-500 font-normal">
               @ {node.current_state}
@@ -179,12 +179,16 @@ function RunTreeNode({ node, depth, onRunClick, selectedRunId }: RunTreeNodeProp
           </span>
 
           {/* States visited */}
-          {(node.states_visited ?? 0) > 0 && (
-            <span className="inline-flex items-center gap-1" title="States visited">
-              <Layers className="w-3 h-3" />
-              {node.states_visited}
-            </span>
-          )}
+          {(() => {
+            const sv = node.states_visited
+            const count = typeof sv === 'number' ? sv : Array.isArray(sv) ? sv.length : 0
+            return count > 0 ? (
+              <span className="inline-flex items-center gap-1" title="States visited">
+                <Layers className="w-3 h-3" />
+                {count}
+              </span>
+            ) : null
+          })()}
         </div>
       </div>
 

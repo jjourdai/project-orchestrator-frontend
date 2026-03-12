@@ -32,8 +32,8 @@ const protocolStatusConfig: Record<ProtocolStatus, { label: string; bg: string; 
   archived: { label: 'Archived', bg: 'bg-white/[0.06]',  text: 'text-gray-500' },
 }
 
-function ProtocolStatusBadge({ status }: { status: ProtocolStatus }) {
-  const cfg = protocolStatusConfig[status]
+function ProtocolStatusBadge({ status }: { status?: ProtocolStatus }) {
+  const cfg = protocolStatusConfig[status ?? 'active'] ?? protocolStatusConfig.active
   return (
     <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-medium ${cfg.bg} ${cfg.text}`}>
       {cfg.label}
@@ -121,7 +121,7 @@ export function ProtocolDetailPage() {
         protocol_name: run.protocol_name ?? protocol?.name ?? 'Unknown',
         status: run.status,
         started_at: run.started_at,
-        finished_at: run.completed_at ?? undefined,
+        finished_at: run.completed_at ?? null,
       })),
     [runs, protocol],
   )
@@ -169,10 +169,10 @@ export function ProtocolDetailPage() {
             <p className="text-gray-400 mt-1 max-w-2xl">{protocol.description}</p>
           )}
           <div className="flex items-center gap-4 mt-2 text-xs text-gray-500">
-            <span>{protocol.states.length} states</span>
-            <span>{protocol.transitions.length} transitions</span>
-            {protocol.tags.length > 0 && (
-              <span>{protocol.tags.join(', ')}</span>
+            <span>{(protocol.states ?? []).length} states</span>
+            <span>{(protocol.transitions ?? []).length} transitions</span>
+            {(protocol.tags ?? []).length > 0 && (
+              <span>{protocol.tags!.join(', ')}</span>
             )}
           </div>
         </div>
@@ -309,8 +309,10 @@ function RunsTab({ runs, loading, error, selectedRunId, onSelectRun, onRefresh }
             </div>
             <div className="flex items-center gap-3 text-xs text-gray-500">
               <span className="font-mono">{run.id.slice(0, 8)}</span>
-              {run.current_state_name && (
-                <span className="text-gray-400">{run.current_state_name}</span>
+              {(run.current_state_name || run.states_visited?.slice(-1)[0]?.state_name) && (
+                <span className="text-gray-400">
+                  {run.current_state_name ?? run.states_visited?.slice(-1)[0]?.state_name}
+                </span>
               )}
               <span className="ml-auto">
                 {new Date(run.started_at).toLocaleDateString()}

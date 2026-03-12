@@ -12,7 +12,7 @@ import type { ProtocolRun } from '@/types/protocol'
 export function mapRunNodeToGantt(node: RunNode, depth = 0): GanttRun {
   return {
     id: node.id,
-    protocol_name: node.protocol_name,
+    protocol_name: node.protocol_name ?? 'Run',
     status: node.status,
     started_at: node.started_at,
     finished_at: node.completed_at ?? null,

@@ -9,6 +9,9 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { FileText, Loader2, AlertCircle, RefreshCw } from 'lucide-react'
 import { RfcCard } from './RfcCard'
 import { rfcApi } from '@/services/rfcApi'
+import { workspacesApi } from '@/services'
+import { Select } from '@/components/ui'
+import { useWorkspaceSlug } from '@/hooks'
 import type { Rfc, RfcStatus } from '@/types/protocol'
 
 // ---------------------------------------------------------------------------
@@ -45,6 +48,30 @@ interface RfcDashboardPageProps {
 // ---------------------------------------------------------------------------
 
 export function RfcDashboardPage({ onRfcClick, className = '' }: RfcDashboardPageProps) {
+  const wsSlug = useWorkspaceSlug()
+
+  // ── Project selector ───────────────────────────────────────────────
+  const [projects, setProjects] = useState<{ id: string; name: string; slug: string }[]>([])
+  const [projectFilter, setProjectFilter] = useState<string>('all')
+
+  useState(() => {
+    if (!wsSlug) return
+    workspacesApi
+      .listProjects(wsSlug)
+      .then(setProjects)
+      .catch(() => {})
+  })
+
+  const activeProjectId = projectFilter !== 'all' ? projectFilter : projects[0]?.id
+
+  const projectOptions = useMemo(
+    () => [
+      { value: 'all', label: 'All Projects' },
+      ...projects.map((p) => ({ value: p.id, label: p.name })),
+    ],
+    [projects],
+  )
+
   const [rfcs, setRfcs] = useState<Rfc[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -55,14 +82,14 @@ export function RfcDashboardPage({ onRfcClick, className = '' }: RfcDashboardPag
     try {
       setLoading(true)
       setError(null)
-      const response = await rfcApi.list({ limit: 200 })
+      const response = await rfcApi.list({ limit: 200, project_id: activeProjectId })
       setRfcs(response.items)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load RFCs')
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [activeProjectId])
 
   useEffect(() => {
     fetchRfcs()
@@ -112,14 +139,21 @@ export function RfcDashboardPage({ onRfcClick, className = '' }: RfcDashboardPag
           )}
         </div>
 
-        <button
-          onClick={fetchRfcs}
-          disabled={loading}
-          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-gray-400 hover:text-gray-200 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] transition-colors disabled:opacity-50"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <Select
+            options={projectOptions}
+            value={projectFilter}
+            onChange={setProjectFilter}
+          />
+          <button
+            onClick={fetchRfcs}
+            disabled={loading}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-gray-400 hover:text-gray-200 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* Status filter tabs */}

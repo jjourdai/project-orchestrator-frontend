@@ -12,6 +12,7 @@ import type { Rfc, RfcStatus } from '@/types/protocol'
 interface ListRfcsParams {
   status?: RfcStatus
   importance?: string
+  project_id?: string
   limit?: number
   offset?: number
 }

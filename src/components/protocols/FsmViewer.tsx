@@ -188,7 +188,7 @@ export function FsmViewer({ protocol: initialProtocol, className = '' }: FsmView
 
   // Compute layout
   const { nodes: layoutNodes, edges: layoutEdges } = useMemo(
-    () => layoutGraph(currentProtocol.states, currentProtocol.transitions),
+    () => layoutGraph(currentProtocol.states ?? [], currentProtocol.transitions ?? []),
     [currentProtocol],
   )
 

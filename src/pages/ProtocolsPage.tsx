@@ -8,17 +8,17 @@
  *   - Refresh button
  */
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useAtomValue } from 'jotai'
 import { RefreshCw } from 'lucide-react'
 
-import { selectedProjectAtom } from '@/atoms/projects'
-import { protocolApi } from '@/services'
+import { protocolApi, workspacesApi } from '@/services'
 import { ProtocolCard } from '@/components/protocols/ProtocolCard'
+import { ScheduledActionsPanel } from '@/components/protocols/ScheduledActionsPanel'
 import {
   PageShell,
   Button,
+  Select,
   SkeletonCard,
   ErrorState,
   EmptyState,
@@ -31,13 +31,14 @@ import type { Protocol, ProtocolStatus } from '@/types/protocol'
 // Filter config
 // ---------------------------------------------------------------------------
 
-type StatusTab = 'all' | ProtocolStatus
+type StatusTab = 'all' | ProtocolStatus | 'scheduled'
 
 const statusTabs: { value: StatusTab; label: string }[] = [
   { value: 'all', label: 'All' },
   { value: 'draft', label: 'Draft' },
   { value: 'active', label: 'Active' },
   { value: 'archived', label: 'Archived' },
+  { value: 'scheduled', label: 'Scheduled' },
 ]
 
 // ---------------------------------------------------------------------------
@@ -47,8 +48,28 @@ const statusTabs: { value: StatusTab; label: string }[] = [
 export function ProtocolsPage() {
   const wsSlug = useWorkspaceSlug()
   const navigate = useNavigate()
-  const selectedProject = useAtomValue(selectedProjectAtom)
-  const projectId = selectedProject?.id
+
+  // ── Project selector (local state, same pattern as SkillsPage) ─────
+  const [projects, setProjects] = useState<{ id: string; name: string; slug: string }[]>([])
+  const [projectFilter, setProjectFilter] = useState<string>('all')
+
+  useState(() => {
+    if (!wsSlug) return
+    workspacesApi
+      .listProjects(wsSlug)
+      .then(setProjects)
+      .catch(() => {})
+  })
+
+  const activeProjectId = projectFilter !== 'all' ? projectFilter : projects[0]?.id
+
+  const projectOptions = useMemo(
+    () => [
+      { value: 'all', label: 'All Projects' },
+      ...projects.map((p) => ({ value: p.id, label: p.name })),
+    ],
+    [projects],
+  )
 
   const [protocols, setProtocols] = useState<Protocol[]>([])
   const [, setTotal] = useState(0)
@@ -59,13 +80,17 @@ export function ProtocolsPage() {
 
   // ── Fetch ────────────────────────────────────────────────────────────
   const fetchProtocols = useCallback(async () => {
-    if (!projectId) return
+    if (!activeProjectId) {
+      setProtocols([])
+      setLoading(false)
+      return
+    }
     setLoading(true)
     setError(null)
     try {
       const res = await protocolApi.listProtocols({
-        project_id: projectId,
-        status: statusFilter !== 'all' ? statusFilter : undefined,
+        project_id: activeProjectId,
+        status: statusFilter !== 'all' && statusFilter !== 'scheduled' ? statusFilter : undefined,
         limit: 100,
         offset: 0,
       })
@@ -76,7 +101,7 @@ export function ProtocolsPage() {
     } finally {
       setLoading(false)
     }
-  }, [projectId, statusFilter, refreshKey])
+  }, [activeProjectId, statusFilter, refreshKey])
 
   useEffect(() => {
     fetchProtocols()
@@ -89,27 +114,22 @@ export function ProtocolsPage() {
     navigate(workspacePath(wsSlug, `/protocols/${protocolId}`))
   }
 
-  // ── No project selected ──────────────────────────────────────────────
-  if (!projectId) {
-    return (
-      <PageShell title="Protocols" description="FSM-based protocol engine">
-        <EmptyState
-          title="No project selected"
-          description="Select a project to view its protocols."
-        />
-      </PageShell>
-    )
-  }
-
   return (
     <PageShell
       title="Protocols"
       description="FSM-based protocol engine"
       actions={
-        <Button variant="secondary" onClick={handleRefresh} disabled={loading}>
-          <RefreshCw className={`w-4 h-4 mr-1.5 ${loading ? 'animate-spin' : ''}`} />
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <Select
+            options={projectOptions}
+            value={projectFilter}
+            onChange={setProjectFilter}
+          />
+          <Button variant="secondary" onClick={handleRefresh} disabled={loading}>
+            <RefreshCw className={`w-4 h-4 mr-1.5 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
+        </div>
       }
     >
       {/* Status filter tabs */}
@@ -130,7 +150,17 @@ export function ProtocolsPage() {
       </div>
 
       {/* Content */}
-      {error ? (
+      {!activeProjectId && projects.length === 0 ? (
+        <EmptyState
+          title="No projects in workspace"
+          description="Add a project to this workspace to view its protocols."
+        />
+      ) : !activeProjectId ? (
+        <EmptyState
+          title="No project selected"
+          description="Select a project to view its protocols."
+        />
+      ) : error ? (
         <ErrorState title="Failed to load protocols" description={error} onRetry={handleRefresh} />
       ) : loading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -138,6 +168,11 @@ export function ProtocolsPage() {
             <SkeletonCard key={i} lines={3} />
           ))}
         </div>
+      ) : statusFilter === 'scheduled' ? (
+        <ScheduledActionsPanel
+          protocols={protocols}
+          onTrigger={handleRefresh}
+        />
       ) : protocols.length === 0 ? (
         <EmptyState
           title="No protocols found"
