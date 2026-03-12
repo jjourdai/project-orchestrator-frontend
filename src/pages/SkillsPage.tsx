@@ -86,38 +86,39 @@ export function SkillsPage() {
 
   // Load projects for filter dropdown
   const [projects, setProjects] = useState<{ id: string; name: string; slug: string }[]>([])
-  useState(() => {
+  useEffect(() => {
+    if (!wsSlug) return
     import('@/services').then(({ workspacesApi }) => {
-      if (!wsSlug) return
       workspacesApi
         .listProjects(wsSlug)
         .then(setProjects)
         .catch(() => {})
     })
-  })
+  }, [wsSlug])
 
-  // Resolve active project id (explicit filter or first project)
-  const activeProjectId = projectFilter !== 'all' ? projectFilter : projects[0]?.id
+  // Resolve active project id (explicit filter or undefined for workspace-wide)
+  const activeProjectId = projectFilter !== 'all' ? projectFilter : undefined
 
-  // Fetch note count for the active project
+  // Fetch note count for the active project (or first project as fallback)
   useEffect(() => {
-    if (!activeProjectId) return
+    const pid = activeProjectId ?? projects[0]?.id
+    if (!pid) return
     setNoteCount(null)
-    notesApi.list({ project_id: activeProjectId, limit: 1 }).then((res) => setNoteCount(res.total)).catch(() => {})
-  }, [activeProjectId])
+    notesApi.list({ project_id: pid, limit: 1 }).then((res) => setNoteCount(res.total)).catch(() => {})
+  }, [activeProjectId, projects])
 
   const projectOptions = useMemo(
-    () => [{ value: 'all', label: 'All Projects' }, ...projects.map((p) => ({ value: p.id, label: p.name }))],
+    () => [{ value: 'all', label: 'Workspace' }, ...projects.map((p) => ({ value: p.id, label: p.name }))],
     [projects],
   )
 
   const filters = useMemo(
     () => ({
       status: statusFilter !== 'all' ? statusFilter : undefined,
-      project_id: projectFilter !== 'all' ? projectFilter : undefined,
+      project_id: activeProjectId,
       _refresh: skillRefresh,
     }),
-    [statusFilter, projectFilter, skillRefresh],
+    [statusFilter, activeProjectId, skillRefresh],
   )
 
   const fetcher = useCallback(
@@ -127,15 +128,24 @@ export function SkillsPage() {
         offset: params.offset,
         status: params.status as SkillStatus | undefined,
       }
-      if (!params.project_id) {
-        // Skills API requires project_id — if none selected, try first project
-        const firstProject = projects[0]
-        if (!firstProject) {
-          return Promise.resolve({ items: [], total: 0, limit: params.limit, offset: params.offset })
-        }
-        return skillsApi.list({ ...typedParams, project_id: firstProject.id })
+      if (params.project_id) {
+        // Single project selected
+        return skillsApi.list({ ...typedParams, project_id: params.project_id })
       }
-      return skillsApi.list({ ...typedParams, project_id: params.project_id })
+      // Workspace mode: fetch from all projects in parallel and merge
+      if (projects.length === 0) {
+        return Promise.resolve({ items: [], total: 0, limit: params.limit, offset: params.offset })
+      }
+      return Promise.all(
+        projects.map((p) =>
+          skillsApi.list({ ...typedParams, project_id: p.id }).catch(() => ({ items: [] as Skill[], total: 0, limit: params.limit, offset: params.offset })),
+        ),
+      ).then((results) => {
+        const merged = results.flatMap((r) => r.items)
+        const seen = new Set<string>()
+        const unique = merged.filter((s) => { if (seen.has(s.id)) return false; seen.add(s.id); return true })
+        return { items: unique, total: unique.length, limit: params.limit, offset: params.offset }
+      })
     },
     [projects],
   )

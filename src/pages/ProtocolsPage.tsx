@@ -55,19 +55,19 @@ export function ProtocolsPage() {
   const [projects, setProjects] = useState<{ id: string; name: string; slug: string }[]>([])
   const [projectFilter, setProjectFilter] = useState<string>('all')
 
-  useState(() => {
+  useEffect(() => {
     if (!wsSlug) return
     workspacesApi
       .listProjects(wsSlug)
       .then(setProjects)
       .catch(() => {})
-  })
+  }, [wsSlug])
 
-  const activeProjectId = projectFilter !== 'all' ? projectFilter : projects[0]?.id
+  const activeProjectId = projectFilter !== 'all' ? projectFilter : undefined
 
   const projectOptions = useMemo(
     () => [
-      { value: 'all', label: 'All Projects' },
+      { value: 'all', label: 'Workspace' },
       ...projects.map((p) => ({ value: p.id, label: p.name })),
     ],
     [projects],
@@ -82,28 +82,45 @@ export function ProtocolsPage() {
 
   // ── Fetch ────────────────────────────────────────────────────────────
   const fetchProtocols = useCallback(async () => {
-    if (!activeProjectId) {
+    if (projects.length === 0) {
       setProtocols([])
       setLoading(false)
       return
     }
     setLoading(true)
     setError(null)
+    const statusParam = statusFilter !== 'all' && statusFilter !== 'scheduled' && statusFilter !== 'activity' ? statusFilter : undefined
     try {
-      const res = await protocolApi.listProtocols({
-        project_id: activeProjectId,
-        status: statusFilter !== 'all' && statusFilter !== 'scheduled' && statusFilter !== 'activity' ? statusFilter : undefined,
-        limit: 100,
-        offset: 0,
-      })
-      setProtocols(res.items)
-      setTotal(res.total)
+      if (activeProjectId) {
+        // Single project selected
+        const res = await protocolApi.listProtocols({
+          project_id: activeProjectId,
+          status: statusParam,
+          limit: 100,
+          offset: 0,
+        })
+        setProtocols(res.items)
+        setTotal(res.total)
+      } else {
+        // Workspace mode: fetch from all projects in parallel and merge
+        const results = await Promise.all(
+          projects.map((p) =>
+            protocolApi.listProtocols({ project_id: p.id, status: statusParam, limit: 100, offset: 0 }).catch(() => ({ items: [] as Protocol[], total: 0 })),
+          ),
+        )
+        const merged = results.flatMap((r) => r.items)
+        // Deduplicate by id (in case of overlap)
+        const seen = new Set<string>()
+        const unique = merged.filter((p) => { if (seen.has(p.id)) return false; seen.add(p.id); return true })
+        setProtocols(unique)
+        setTotal(unique.length)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load protocols')
     } finally {
       setLoading(false)
     }
-  }, [activeProjectId, statusFilter, refreshKey])
+  }, [activeProjectId, projects, statusFilter, refreshKey])
 
   useEffect(() => {
     fetchProtocols()

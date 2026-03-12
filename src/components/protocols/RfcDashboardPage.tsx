@@ -69,11 +69,11 @@ export function RfcDashboardPage({ onRfcClick: externalOnRfcClick, className = '
       .catch(() => {})
   }, [wsSlug])
 
-  const activeProjectId = projectFilter !== 'all' ? projectFilter : projects[0]?.id
+  const activeProjectId = projectFilter !== 'all' ? projectFilter : undefined
 
   const projectOptions = useMemo(
     () => [
-      { value: 'all', label: 'All Projects' },
+      { value: 'all', label: 'Workspace' },
       ...projects.map((p) => ({ value: p.id, label: p.name })),
     ],
     [projects],
@@ -84,7 +84,7 @@ export function RfcDashboardPage({ onRfcClick: externalOnRfcClick, className = '
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<RfcStatus | 'all'>('all')
 
-  // Fetch RFCs
+  // Fetch RFCs — when "Workspace" is selected, omit project_id to get all
   const fetchRfcs = useCallback(async () => {
     try {
       setLoading(true)
