@@ -178,11 +178,6 @@ export function ProtocolsPage() {
           title="No projects in workspace"
           description="Add a project to this workspace to view its protocols."
         />
-      ) : !activeProjectId ? (
-        <EmptyState
-          title="No project selected"
-          description="Select a project to view its protocols."
-        />
       ) : error ? (
         <ErrorState title="Failed to load protocols" description={error} onRetry={handleRefresh} />
       ) : loading ? (
