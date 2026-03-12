@@ -61,13 +61,13 @@ export function RfcDashboardPage({ onRfcClick: externalOnRfcClick, className = '
   const [projects, setProjects] = useState<{ id: string; name: string; slug: string }[]>([])
   const [projectFilter, setProjectFilter] = useState<string>('all')
 
-  useState(() => {
+  useEffect(() => {
     if (!wsSlug) return
     workspacesApi
       .listProjects(wsSlug)
       .then(setProjects)
       .catch(() => {})
-  })
+  }, [wsSlug])
 
   const activeProjectId = projectFilter !== 'all' ? projectFilter : projects[0]?.id
 

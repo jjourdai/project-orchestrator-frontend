@@ -1,18 +1,17 @@
 /**
  * RfcDetailPage — Full view of a single RFC document.
  *
- * Displays:
- *   - Header with title, status badge, importance, metadata
- *   - Action buttons for lifecycle transitions
- *   - Full content rendered as markdown-like sections
- *   - Tags
- *   - Protocol run link (if any)
+ * Layout:
+ *   - PageHeader with title, status badge, importance, metadata
+ *   - SectionNav for quick-jump between sections
+ *   - Lifecycle progress bar showing the RFC journey
+ *   - Full content rendered via CollapsibleMarkdown per section
+ *   - Tags, linked protocol run, action buttons
  */
 
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
-  ArrowLeft,
   FileText,
   Calendar,
   Hash,
@@ -22,14 +21,28 @@ import {
   Rocket,
   Send,
   AlertTriangle,
-  Loader2,
   ExternalLink,
-  Clock,
+  Tag,
+  CheckCircle2,
+  Circle,
+  ArrowRight,
 } from 'lucide-react'
-import { PageShell, Button } from '@/components/ui'
+import {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardContent,
+  CollapsibleMarkdown,
+  SectionNav,
+  LoadingPage,
+  ErrorState,
+  Badge,
+} from '@/components/ui'
 import { RfcStatusBadge } from '@/components/protocols/RfcStatusBadge'
+import { PageHeader } from '@/components/ui/PageHeader'
 import { rfcApi } from '@/services/rfcApi'
-import { useWorkspaceSlug } from '@/hooks'
+import { useWorkspaceSlug, useSectionObserver, useToast } from '@/hooks'
+import { useViewTransition } from '@/hooks/useViewTransition'
 import { workspacePath } from '@/utils/paths'
 import type { Rfc, RfcStatus } from '@/types/protocol'
 
@@ -37,27 +50,35 @@ import type { Rfc, RfcStatus } from '@/types/protocol'
 // Visual config
 // ---------------------------------------------------------------------------
 
-const importanceConfig: Record<string, { dot: string; label: string; border: string }> = {
-  critical: { dot: 'bg-red-400',    label: 'Critical', border: 'border-red-500/30' },
-  high:     { dot: 'bg-orange-400', label: 'High',     border: 'border-orange-500/30' },
-  medium:   { dot: 'bg-yellow-400', label: 'Medium',   border: 'border-yellow-500/30' },
-  low:      { dot: 'bg-gray-400',   label: 'Low',      border: 'border-gray-500/30' },
-}
-
-const statusColor: Record<RfcStatus, string> = {
-  draft:       'border-l-gray-500',
-  proposed:    'border-l-blue-500',
-  accepted:    'border-l-green-500',
-  implemented: 'border-l-emerald-500',
-  rejected:    'border-l-red-500',
+const importanceConfig: Record<string, { dot: string; label: string; variant: 'error' | 'warning' | 'default' | 'success' }> = {
+  critical: { dot: 'bg-red-400',    label: 'Critical', variant: 'error' },
+  high:     { dot: 'bg-orange-400', label: 'High',     variant: 'warning' },
+  medium:   { dot: 'bg-yellow-400', label: 'Medium',   variant: 'default' },
+  low:      { dot: 'bg-gray-400',   label: 'Low',      variant: 'default' },
 }
 
 const actionConfig = {
-  propose:   { label: 'Propose',        icon: Send,       color: 'text-blue-400 bg-blue-500/10 border-blue-500/20 hover:bg-blue-500/25' },
-  accept:    { label: 'Accept',         icon: ThumbsUp,   color: 'text-green-400 bg-green-500/10 border-green-500/20 hover:bg-green-500/25' },
-  reject:    { label: 'Reject',         icon: ThumbsDown, color: 'text-red-400 bg-red-500/10 border-red-500/20 hover:bg-red-500/25' },
-  implement: { label: 'Mark Implemented', icon: Rocket,   color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20 hover:bg-emerald-500/25' },
+  propose:   { label: 'Propose',          icon: Send,       cls: 'text-blue-400 bg-blue-500/10 border-blue-500/20 hover:bg-blue-500/25' },
+  accept:    { label: 'Accept',           icon: ThumbsUp,   cls: 'text-green-400 bg-green-500/10 border-green-500/20 hover:bg-green-500/25' },
+  reject:    { label: 'Reject',           icon: ThumbsDown, cls: 'text-red-400 bg-red-500/10 border-red-500/20 hover:bg-red-500/25' },
+  implement: { label: 'Mark Implemented', icon: Rocket,     cls: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20 hover:bg-emerald-500/25' },
 } as const
+
+// ---------------------------------------------------------------------------
+// Lifecycle pipeline steps
+// ---------------------------------------------------------------------------
+
+const LIFECYCLE_STEPS: { key: RfcStatus; label: string }[] = [
+  { key: 'draft',       label: 'Draft' },
+  { key: 'proposed',    label: 'Proposed' },
+  { key: 'accepted',    label: 'Accepted' },
+  { key: 'implemented', label: 'Implemented' },
+]
+
+function getLifecycleIndex(status: RfcStatus): number {
+  if (status === 'rejected') return -1
+  return LIFECYCLE_STEPS.findIndex((s) => s.key === status)
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -65,19 +86,19 @@ const actionConfig = {
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, {
-    weekday: 'short',
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric',
+    weekday: 'short', month: 'long', day: 'numeric', year: 'numeric',
   })
 }
 
-function formatRelativeTime(iso: string): string {
-  const diffMs = Date.now() - new Date(iso).getTime()
-  const days = Math.floor(diffMs / (1000 * 60 * 60 * 24))
-  if (days === 0) return 'today'
-  if (days === 1) return 'yesterday'
-  if (days < 30) return `${days} days ago`
+function relativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  if (days < 30) return `${days}d ago`
   const months = Math.floor(days / 30)
   return `${months} month${months > 1 ? 's' : ''} ago`
 }
@@ -91,110 +112,97 @@ function availableActions(status: RfcStatus): ('propose' | 'accept' | 'reject' |
   }
 }
 
-/** Simple markdown-ish renderer: handles headers, bold, lists, code blocks */
-function renderMarkdownContent(content: string): React.ReactNode {
-  const lines = content.split('\n')
-  const elements: React.ReactNode[] = []
-  let inCodeBlock = false
-  let codeLines: string[] = []
-  let codeKey = 0
+// ---------------------------------------------------------------------------
+// Section nav config
+// ---------------------------------------------------------------------------
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-
-    // Code block toggle
-    if (line.trim().startsWith('```')) {
-      if (inCodeBlock) {
-        elements.push(
-          <pre key={`code-${codeKey++}`} className="bg-white/[0.04] border border-white/[0.06] rounded-lg p-3 text-xs text-gray-300 font-mono overflow-x-auto my-2">
-            {codeLines.join('\n')}
-          </pre>,
-        )
-        codeLines = []
-        inCodeBlock = false
-      } else {
-        inCodeBlock = true
-      }
-      continue
-    }
-
-    if (inCodeBlock) {
-      codeLines.push(line)
-      continue
-    }
-
-    const trimmed = line.trim()
-
-    // Empty line → spacer
-    if (!trimmed) {
-      elements.push(<div key={i} className="h-2" />)
-      continue
-    }
-
-    // Headers
-    if (trimmed.startsWith('### ')) {
-      elements.push(
-        <h4 key={i} className="text-sm font-semibold text-gray-200 mt-4 mb-1">
-          {trimmed.slice(4)}
-        </h4>,
-      )
-      continue
-    }
-    if (trimmed.startsWith('## ')) {
-      elements.push(
-        <h3 key={i} className="text-base font-semibold text-gray-100 mt-5 mb-2">
-          {trimmed.slice(3)}
-        </h3>,
-      )
-      continue
-    }
-    if (trimmed.startsWith('# ')) {
-      elements.push(
-        <h2 key={i} className="text-lg font-bold text-gray-100 mt-6 mb-2">
-          {trimmed.slice(2)}
-        </h2>,
-      )
-      continue
-    }
-
-    // Horizontal rule
-    if (trimmed === '---' || trimmed === '***') {
-      elements.push(<hr key={i} className="border-white/[0.06] my-4" />)
-      continue
-    }
-
-    // List items
-    if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
-      elements.push(
-        <div key={i} className="flex gap-2 text-sm text-gray-400 leading-relaxed pl-1">
-          <span className="text-gray-600 shrink-0">•</span>
-          <span>{trimmed.slice(2)}</span>
-        </div>,
-      )
-      continue
-    }
-
-    // Numbered list
-    const numMatch = trimmed.match(/^(\d+)\.\s+(.+)/)
-    if (numMatch) {
-      elements.push(
-        <div key={i} className="flex gap-2 text-sm text-gray-400 leading-relaxed pl-1">
-          <span className="text-gray-600 shrink-0 tabular-nums">{numMatch[1]}.</span>
-          <span>{numMatch[2]}</span>
-        </div>,
-      )
-      continue
-    }
-
-    // Regular paragraph
-    elements.push(
-      <p key={i} className="text-sm text-gray-400 leading-relaxed">
-        {trimmed}
-      </p>,
-    )
+function buildSections(rfc: Rfc) {
+  const sections = [{ id: 'overview', label: 'Overview' }]
+  if (rfc.sections.length > 1) {
+    sections.push({ id: 'content', label: `Content (${rfc.sections.length})` })
+  } else {
+    sections.push({ id: 'content', label: 'Content' })
   }
+  if (rfc.tags.length > 0) {
+    sections.push({ id: 'tags', label: `Tags (${rfc.tags.filter((t) => !t.startsWith('rfc-')).length})` })
+  }
+  sections.push({ id: 'actions', label: 'Actions' })
+  return sections
+}
 
-  return elements
+// ---------------------------------------------------------------------------
+// Lifecycle Progress Component
+// ---------------------------------------------------------------------------
+
+function LifecycleProgress({ status }: { status: RfcStatus }) {
+  const activeIdx = getLifecycleIndex(status)
+  const isRejected = status === 'rejected'
+
+  return (
+    <div className="flex items-center gap-0">
+      {LIFECYCLE_STEPS.map((step, idx) => {
+        const isCompleted = !isRejected && idx < activeIdx
+        const isCurrent = !isRejected && idx === activeIdx
+        const isPending = !isRejected && idx > activeIdx
+
+        return (
+          <div key={step.key} className="flex items-center">
+            {/* Step */}
+            <div className="flex flex-col items-center gap-1">
+              <div
+                className={`
+                  w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold border-2 transition-all
+                  ${isCompleted ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400' : ''}
+                  ${isCurrent ? 'bg-blue-500/20 border-blue-400 text-blue-400 ring-2 ring-blue-500/20' : ''}
+                  ${isPending ? 'bg-white/[0.04] border-white/[0.08] text-gray-600' : ''}
+                  ${isRejected ? 'bg-white/[0.04] border-white/[0.08] text-gray-600' : ''}
+                `}
+              >
+                {isCompleted ? (
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                ) : (
+                  <Circle className="w-3 h-3" />
+                )}
+              </div>
+              <span
+                className={`text-[10px] font-medium whitespace-nowrap
+                  ${isCompleted ? 'text-emerald-400' : ''}
+                  ${isCurrent ? 'text-blue-400' : ''}
+                  ${isPending || isRejected ? 'text-gray-600' : ''}
+                `}
+              >
+                {step.label}
+              </span>
+            </div>
+
+            {/* Connector */}
+            {idx < LIFECYCLE_STEPS.length - 1 && (
+              <div
+                className={`w-8 h-0.5 mx-1 mb-5 rounded-full ${
+                  !isRejected && idx < activeIdx
+                    ? 'bg-emerald-500/40'
+                    : 'bg-white/[0.06]'
+                }`}
+              />
+            )}
+          </div>
+        )
+      })}
+
+      {/* Rejected state — separate indicator */}
+      {isRejected && (
+        <>
+          <div className="w-8 h-0.5 mx-1 mb-5 rounded-full bg-red-500/30" />
+          <div className="flex flex-col items-center gap-1">
+            <div className="w-7 h-7 rounded-full flex items-center justify-center border-2 bg-red-500/20 border-red-500/50 text-red-400 ring-2 ring-red-500/20">
+              <AlertTriangle className="w-3 h-3" />
+            </div>
+            <span className="text-[10px] font-medium text-red-400">Rejected</span>
+          </div>
+        </>
+      )}
+    </div>
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -205,12 +213,16 @@ export function RfcDetailPage() {
   const { rfcId } = useParams<{ rfcId: string }>()
   const navigate = useNavigate()
   const wsSlug = useWorkspaceSlug()
+  const toast = useToast()
+  const { navigate: viewNav } = useViewTransition()
 
   const [rfc, setRfc] = useState<Rfc | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [actionError, setActionError] = useState<string | null>(null)
   const [transitioning, setTransitioning] = useState<string | null>(null)
+
+  const sections = rfc ? buildSections(rfc) : []
+  const activeSection = useSectionObserver(sections.map((s) => s.id))
 
   // Fetch RFC
   const fetchRfc = useCallback(async () => {
@@ -235,46 +247,33 @@ export function RfcDetailPage() {
   const handleAction = useCallback(
     async (action: 'propose' | 'accept' | 'reject' | 'implement') => {
       if (!rfcId) return
-      setActionError(null)
       setTransitioning(action)
       try {
         const updated = await rfcApi.transition(rfcId, action)
         setRfc(updated)
+        toast.success(`RFC ${action === 'implement' ? 'marked as implemented' : action + 'd'} successfully`)
       } catch (err) {
         const msg = err instanceof Error ? err.message : `Failed to ${action} RFC`
         const match = msg.match(/"error":"([^"]+)"/)
-        setActionError(match ? match[1] : msg)
-        setTimeout(() => setActionError(null), 8000)
+        toast.error(match ? match[1] : msg)
       } finally {
         setTransitioning(null)
       }
     },
-    [rfcId],
+    [rfcId, toast],
   )
 
-  const goBack = () => navigate(workspacePath(wsSlug, '/rfcs'))
+  const goBack = () => viewNav(workspacePath(wsSlug, '/rfcs'), { type: 'back-button' })
 
-  // Loading state
-  if (loading) {
-    return (
-      <PageShell title="RFC" description="Loading...">
-        <div className="flex items-center justify-center h-64">
-          <Loader2 className="w-8 h-8 text-gray-500 animate-spin" />
-        </div>
-      </PageShell>
-    )
-  }
-
-  // Error state
+  // Loading / Error states
+  if (loading) return <LoadingPage />
   if (error || !rfc) {
     return (
-      <PageShell title="RFC" description="Error">
-        <div className="flex flex-col items-center justify-center h-64 gap-4">
-          <AlertTriangle className="w-10 h-10 text-red-400/60" />
-          <p className="text-sm text-red-400">{error ?? 'RFC not found'}</p>
-          <Button variant="secondary" onClick={goBack}>Back to RFCs</Button>
-        </div>
-      </PageShell>
+      <ErrorState
+        title="RFC not found"
+        description={error || 'Could not load this RFC document.'}
+        onRetry={fetchRfc}
+      />
     )
   }
 
@@ -282,152 +281,229 @@ export function RfcDetailPage() {
   const actions = availableActions(rfc.status)
   const hasRun = !!rfc.protocol_run_id
   const isSingleContent = rfc.sections.length === 1 && rfc.sections[0].title === 'Content'
+  const visibleTags = rfc.tags.filter((t) => !t.startsWith('rfc-'))
 
   return (
-    <PageShell
-      title=""
-      actions={
-        <Button variant="secondary" onClick={goBack}>
-          <ArrowLeft className="w-4 h-4 mr-1.5" />
-          Back to RFCs
-        </Button>
-      }
-    >
-      <div className="max-w-4xl mx-auto space-y-6">
-        {/* ── Header card ─────────────────────────────────────────────── */}
-        <div className={`rounded-xl border border-white/[0.06] bg-white/[0.02] border-l-[4px] ${statusColor[rfc.status]} p-6 space-y-4`}>
-          {/* Title row */}
-          <div className="flex items-start gap-3">
-            <FileText className="w-6 h-6 text-blue-400 shrink-0 mt-0.5" />
-            <div className="min-w-0 flex-1">
-              <h1 className="text-xl font-bold text-gray-100">{rfc.title}</h1>
+    <div className="pt-6 space-y-6">
+      {/* ── Header ──────────────────────────────────────────────────────── */}
+      <PageHeader
+        title={rfc.title}
+        status={<RfcStatusBadge status={rfc.status} />}
+        metadata={[
+          { label: 'Created', value: relativeTime(rfc.created_at) },
+          ...(rfc.updated_at ? [{ label: 'Updated', value: relativeTime(rfc.updated_at) }] : []),
+        ]}
+        actions={
+          <button
+            onClick={goBack}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-gray-400 hover:text-gray-200 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] transition-colors"
+          >
+            <ArrowRight className="w-3.5 h-3.5 rotate-180" />
+            Back to RFCs
+          </button>
+        }
+      >
+        <Badge variant={imp.variant}>
+          <span className={`w-2 h-2 rounded-full ${imp.dot} mr-1`} />
+          {imp.label}
+        </Badge>
+      </PageHeader>
+
+      <SectionNav sections={sections} activeSection={activeSection} />
+
+      {/* ── Overview Section ────────────────────────────────────────────── */}
+      <section id="overview" className="scroll-mt-20 space-y-4">
+        {/* Lifecycle progress */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Lifecycle</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center justify-center py-2">
+              <LifecycleProgress status={rfc.status} />
             </div>
-          </div>
+          </CardContent>
+        </Card>
 
-          {/* Badges row */}
-          <div className="flex items-center gap-3 flex-wrap">
-            <RfcStatusBadge status={rfc.status} />
-            <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-medium border ${imp.border} bg-white/[0.03]`}>
-              <span className={`w-2 h-2 rounded-full ${imp.dot}`} />
-              {imp.label}
-            </span>
-          </div>
-
-          {/* Metadata row */}
-          <div className="flex items-center gap-4 text-xs text-gray-500 flex-wrap">
-            <span className="inline-flex items-center gap-1.5">
-              <Calendar className="w-3.5 h-3.5" />
-              {formatDate(rfc.created_at)}
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <Clock className="w-3.5 h-3.5" />
-              {formatRelativeTime(rfc.created_at)}
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <Hash className="w-3.5 h-3.5" />
-              <span className="font-mono">{rfc.id.slice(0, 12)}</span>
-            </span>
-            {rfc.sections.length > 1 && (
-              <span className="inline-flex items-center gap-1.5">
-                <BookOpen className="w-3.5 h-3.5" />
-                {rfc.sections.length} sections
-              </span>
-            )}
-            {rfc.protocol_run_id && (
-              <button
-                onClick={() => navigate(workspacePath(wsSlug, `/protocols`))}
-                className="inline-flex items-center gap-1 text-indigo-400 hover:text-indigo-300 transition-colors"
-              >
-                <ExternalLink className="w-3.5 h-3.5" />
-                Protocol run
-              </button>
-            )}
-          </div>
-
-          {/* Tags */}
-          {rfc.tags.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
-              {rfc.tags.filter((t) => !t.startsWith('rfc-')).map((tag) => (
-                <span
-                  key={tag}
-                  className="px-2 py-0.5 rounded-md text-[11px] text-gray-400 bg-white/[0.04] border border-white/[0.06]"
-                >
-                  {tag}
-                </span>
-              ))}
-            </div>
-          )}
-
-          {/* Actions */}
-          {actions.length > 0 && (
-            <div className="flex items-center gap-3 pt-3 border-t border-white/[0.06]">
-              {hasRun ? (
-                actions.map((action) => {
-                  const cfg = actionConfig[action]
-                  const Icon = cfg.icon
-                  const isTransitioning = transitioning === action
-                  return (
-                    <button
-                      key={action}
-                      onClick={() => handleAction(action)}
-                      disabled={!!transitioning}
-                      className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold border transition-all active:scale-95 disabled:opacity-50 ${cfg.color}`}
-                    >
-                      {isTransitioning ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <Icon className="w-4 h-4" />
-                      )}
-                      {cfg.label}
-                    </button>
-                  )
-                })
-              ) : (
-                <div className="flex items-center gap-2 text-sm text-amber-500/70">
-                  <AlertTriangle className="w-4 h-4" />
-                  No protocol run linked — transitions unavailable
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* ── Error toast ─────────────────────────────────────────────── */}
-        {actionError && (
-          <div className="px-4 py-3 rounded-xl text-sm text-amber-300 bg-amber-500/10 border border-amber-500/20 flex items-center justify-between gap-3">
-            <span>{actionError}</span>
-            <button
-              onClick={() => setActionError(null)}
-              className="text-amber-400 hover:text-amber-200 text-xs font-medium shrink-0"
-            >
-              Dismiss
-            </button>
-          </div>
-        )}
-
-        {/* ── Content sections ────────────────────────────────────────── */}
-        {isSingleContent ? (
-          <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-6">
-            {renderMarkdownContent(rfc.sections[0].content)}
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {rfc.sections.map((section, idx) => (
-              <div
-                key={idx}
-                className="rounded-xl border border-white/[0.06] bg-white/[0.02] overflow-hidden"
-              >
-                <div className="px-5 py-3 border-b border-white/[0.06] bg-white/[0.02]">
-                  <h2 className="text-sm font-semibold text-gray-200">{section.title}</h2>
-                </div>
-                <div className="px-5 py-4">
-                  {renderMarkdownContent(section.content)}
+        {/* Metadata card */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Details</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="space-y-1">
+                <p className="text-[11px] font-medium text-gray-500 uppercase tracking-wider">Status</p>
+                <RfcStatusBadge status={rfc.status} />
+              </div>
+              <div className="space-y-1">
+                <p className="text-[11px] font-medium text-gray-500 uppercase tracking-wider">Importance</p>
+                <div className="flex items-center gap-1.5">
+                  <span className={`w-2.5 h-2.5 rounded-full ${imp.dot}`} />
+                  <span className="text-sm text-gray-300">{imp.label}</span>
                 </div>
               </div>
-            ))}
-          </div>
+              <div className="space-y-1">
+                <p className="text-[11px] font-medium text-gray-500 uppercase tracking-wider">Created</p>
+                <div className="flex items-center gap-1.5 text-sm text-gray-300">
+                  <Calendar className="w-3.5 h-3.5 text-gray-500" />
+                  {formatDate(rfc.created_at)}
+                </div>
+              </div>
+              <div className="space-y-1">
+                <p className="text-[11px] font-medium text-gray-500 uppercase tracking-wider">Sections</p>
+                <div className="flex items-center gap-1.5 text-sm text-gray-300">
+                  <BookOpen className="w-3.5 h-3.5 text-gray-500" />
+                  {rfc.sections.length} {rfc.sections.length === 1 ? 'section' : 'sections'}
+                </div>
+              </div>
+            </div>
+
+            {/* IDs row */}
+            <div className="mt-4 pt-3 border-t border-white/[0.06] flex flex-wrap items-center gap-4 text-xs text-gray-500">
+              <span className="inline-flex items-center gap-1.5">
+                <Hash className="w-3 h-3" />
+                <span className="font-mono">{rfc.id.slice(0, 12)}</span>
+              </span>
+              {rfc.protocol_run_id && (
+                <button
+                  onClick={() => navigate(workspacePath(wsSlug, '/protocols'))}
+                  className="inline-flex items-center gap-1 text-indigo-400 hover:text-indigo-300 transition-colors"
+                >
+                  <ExternalLink className="w-3 h-3" />
+                  Protocol run
+                  <ArrowRight className="w-3 h-3" />
+                </button>
+              )}
+              {!rfc.protocol_run_id && (
+                <span className="inline-flex items-center gap-1 text-amber-500/50">
+                  <AlertTriangle className="w-3 h-3" />
+                  No protocol run linked
+                </span>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </section>
+
+      {/* ── Content Section ─────────────────────────────────────────────── */}
+      <section id="content" className="scroll-mt-20 space-y-4">
+        {isSingleContent ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>
+                <FileText className="w-4 h-4 mr-1.5 inline" />
+                Content
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <CollapsibleMarkdown content={rfc.sections[0].content} maxHeight={600} />
+            </CardContent>
+          </Card>
+        ) : (
+          rfc.sections.map((section, idx) => (
+            <Card key={idx}>
+              <CardHeader>
+                <CardTitle>
+                  <BookOpen className="w-4 h-4 mr-1.5 inline text-gray-500" />
+                  {section.title}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <CollapsibleMarkdown content={section.content} maxHeight={400} />
+              </CardContent>
+            </Card>
+          ))
         )}
-      </div>
-    </PageShell>
+      </section>
+
+      {/* ── Tags Section ────────────────────────────────────────────────── */}
+      {visibleTags.length > 0 && (
+        <section id="tags" className="scroll-mt-20">
+          <Card>
+            <CardHeader>
+              <CardTitle>
+                <Tag className="w-4 h-4 mr-1.5 inline text-gray-500" />
+                Tags ({visibleTags.length})
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-wrap gap-2">
+                {visibleTags.map((tag) => (
+                  <Badge key={tag} variant="default">{tag}</Badge>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </section>
+      )}
+
+      {/* ── Actions Section ─────────────────────────────────────────────── */}
+      <section id="actions" className="scroll-mt-20">
+        <Card>
+          <CardHeader>
+            <CardTitle>Actions</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {actions.length === 0 ? (
+              <div className="flex items-center gap-3 py-2">
+                <CheckCircle2 className="w-5 h-5 text-gray-500" />
+                <div>
+                  <p className="text-sm text-gray-400">No actions available</p>
+                  <p className="text-xs text-gray-600">
+                    {rfc.status === 'implemented'
+                      ? 'This RFC has been fully implemented.'
+                      : rfc.status === 'rejected'
+                        ? 'This RFC has been rejected.'
+                        : 'No transitions are available for the current state.'}
+                  </p>
+                </div>
+              </div>
+            ) : !hasRun ? (
+              <div className="flex items-center gap-3 py-2 px-3 rounded-lg bg-amber-500/5 border border-amber-500/10">
+                <AlertTriangle className="w-5 h-5 text-amber-500/70 shrink-0" />
+                <div>
+                  <p className="text-sm text-amber-400">No protocol run linked</p>
+                  <p className="text-xs text-amber-500/50">
+                    Lifecycle transitions require a linked protocol run. Create one from the Protocols page.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-xs text-gray-500">
+                  Available transitions for <span className="text-gray-400 font-medium">{rfc.status}</span> state:
+                </p>
+                <div className="flex flex-wrap gap-3">
+                  {actions.map((action) => {
+                    const cfg = actionConfig[action]
+                    const Icon = cfg.icon
+                    const isLoading = transitioning === action
+                    return (
+                      <button
+                        key={action}
+                        onClick={() => handleAction(action)}
+                        disabled={!!transitioning}
+                        className={`
+                          inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold
+                          border transition-all active:scale-[0.97] disabled:opacity-50 ${cfg.cls}
+                        `}
+                      >
+                        {isLoading ? (
+                          <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          <Icon className="w-4 h-4" />
+                        )}
+                        {cfg.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </section>
+    </div>
   )
 }
