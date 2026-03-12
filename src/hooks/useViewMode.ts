@@ -3,24 +3,39 @@ import { useSearchParams } from 'react-router-dom'
 
 type ViewMode = 'list' | 'kanban'
 
-export function useViewMode(defaultMode: ViewMode = 'list'): [ViewMode, (mode: ViewMode) => void] {
+const STORAGE_KEY = 'preferred-view-mode'
+const DEFAULT_MODE: ViewMode = 'kanban'
+
+function getStoredMode(): ViewMode {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY)
+    if (stored === 'list' || stored === 'kanban') return stored
+  } catch {
+    // localStorage unavailable
+  }
+  return DEFAULT_MODE
+}
+
+export function useViewMode(): [ViewMode, (mode: ViewMode) => void] {
   const [searchParams, setSearchParams] = useSearchParams()
 
-  const viewMode = (searchParams.get('view') as ViewMode) || defaultMode
+  const urlMode = searchParams.get('view') as ViewMode | null
+  const viewMode: ViewMode = urlMode === 'list' || urlMode === 'kanban' ? urlMode : getStoredMode()
 
   const setViewMode = useCallback(
     (mode: ViewMode) => {
+      try {
+        localStorage.setItem(STORAGE_KEY, mode)
+      } catch {
+        // localStorage unavailable
+      }
       setSearchParams((prev) => {
         const next = new URLSearchParams(prev)
-        if (mode === defaultMode) {
-          next.delete('view')
-        } else {
-          next.set('view', mode)
-        }
+        next.delete('view')
         return next
       }, { replace: true })
     },
-    [setSearchParams, defaultMode],
+    [setSearchParams],
   )
 
   return [viewMode, setViewMode]

@@ -29,6 +29,7 @@ import {
   useInfiniteList,
   useWorkspaceSlug,
   useViewTransition,
+  useProjectFilter,
 } from '@/hooks'
 import { CreatePlanForm, EditPlanForm } from '@/components/forms'
 import type { EditPlanFormData } from '@/components/forms/EditPlanForm'
@@ -68,6 +69,7 @@ export function PlansPage() {
   const editDialog = useFormDialog()
   const toast = useToast()
   const wsSlug = useWorkspaceSlug()
+  const { selectedProjectId, setSelectedProjectId, projectFilterParam, projectOptions } = useProjectFilter()
   const [editingPlan, setEditingPlan] = useState<Plan | null>(null)
 
   // Kanban filters (workspace filter removed — implicit via wsSlug)
@@ -99,10 +101,11 @@ export function PlansPage() {
   const listFilters = useMemo(
     () => ({
       status: statusFilter !== 'all' ? statusFilter : undefined,
+      project_id: projectFilterParam,
       _refresh: planRefresh,
       _ws: wsSlug, // trigger reset on workspace change
     }),
-    [statusFilter, planRefresh, wsSlug]
+    [statusFilter, projectFilterParam, planRefresh, wsSlug]
   )
 
   const listFetcher = useCallback(
@@ -110,11 +113,13 @@ export function PlansPage() {
       limit: number
       offset: number
       status?: string
+      project_id?: string
     }): Promise<PaginatedResponse<Plan>> => {
       return plansApi.list({
         limit: params.limit,
         offset: params.offset,
         status: params.status,
+        project_id: params.project_id,
         workspace_slug: wsSlug,
       })
     },
@@ -305,12 +310,20 @@ export function PlansPage() {
       actions={
         <>
           {viewMode === 'list' && (
-            <Select
-              options={statusOptions}
-              value={statusFilter}
-              onChange={(value) => setStatusFilter(value as PlanStatus | 'all')}
-              className="w-full sm:w-40"
-            />
+            <>
+              <Select
+                options={projectOptions}
+                value={selectedProjectId}
+                onChange={setSelectedProjectId}
+                className="w-full sm:w-44"
+              />
+              <Select
+                options={statusOptions}
+                value={statusFilter}
+                onChange={(value) => setStatusFilter(value as PlanStatus | 'all')}
+                className="w-full sm:w-40"
+              />
+            </>
           )}
           <ViewToggle value={viewMode} onChange={setViewMode} />
           <Button onClick={openCreatePlan}>Create Plan</Button>
