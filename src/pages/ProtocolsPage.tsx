@@ -34,11 +34,11 @@ import type { Protocol, ProtocolStatus } from '@/types/protocol'
 type StatusTab = 'all' | ProtocolStatus | 'scheduled'
 
 const statusTabs: { value: StatusTab; label: string }[] = [
+  { value: 'scheduled', label: 'Scheduled' },
   { value: 'all', label: 'All' },
   { value: 'draft', label: 'Draft' },
   { value: 'active', label: 'Active' },
   { value: 'archived', label: 'Archived' },
-  { value: 'scheduled', label: 'Scheduled' },
 ]
 
 // ---------------------------------------------------------------------------
@@ -75,7 +75,7 @@ export function ProtocolsPage() {
   const [, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [statusFilter, setStatusFilter] = useState<StatusTab>('all')
+  const [statusFilter, setStatusFilter] = useState<StatusTab>('scheduled')
   const [refreshKey, setRefreshKey] = useState(0)
 
   // ── Fetch ────────────────────────────────────────────────────────────

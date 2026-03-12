@@ -1,11 +1,12 @@
 /**
  * RfcCard — Card component for displaying an RFC summary.
  *
- * Shows title, creation date, importance badge, truncated section previews
- * (Problem, Proposed Solution), status badge, and action buttons.
+ * Shows title, creation date, importance badge, truncated content preview,
+ * status badge, section count, creator, and action buttons (only when a
+ * protocol run is linked).
  */
 
-import { Calendar, FileText, ThumbsUp, ThumbsDown } from 'lucide-react'
+import { Calendar, FileText, ThumbsUp, ThumbsDown, User, Hash, AlertTriangle } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/Card'
 import { RfcStatusBadge } from './RfcStatusBadge'
 import type { Rfc, RfcStatus } from '@/types/protocol'
@@ -41,6 +42,28 @@ function findSection(rfc: Rfc, title: string): string | undefined {
   return section?.content
 }
 
+/**
+ * Extract a meaningful preview from markdown content.
+ * Skips header lines, metadata lines (bold key: value), and blank lines.
+ */
+function extractContentPreview(content: string, maxLen: number): string {
+  const lines = content.split('\n')
+  const meaningful: string[] = []
+  for (const line of lines) {
+    const trimmed = line.trim()
+    // Skip headers, empty lines, horizontal rules, metadata-style lines
+    if (!trimmed) continue
+    if (trimmed.startsWith('#')) continue
+    if (trimmed.startsWith('---')) continue
+    if (trimmed.startsWith('**') && trimmed.includes(':')) continue
+    meaningful.push(trimmed)
+    if (meaningful.join(' ').length >= maxLen) break
+  }
+  const text = meaningful.join(' ')
+  if (text.length <= maxLen) return text
+  return text.slice(0, maxLen).trimEnd() + '...'
+}
+
 function truncate(text: string, maxLen: number): string {
   if (text.length <= maxLen) return text
   return text.slice(0, maxLen).trimEnd() + '...'
@@ -73,6 +96,14 @@ export function RfcCard({ rfc, onAction, onClick, className = '' }: RfcCardProps
   const problem = findSection(rfc, 'problem')
   const solution = findSection(rfc, 'proposed solution') ?? findSection(rfc, 'solution')
   const actions = availableActions(rfc.status)
+  const hasRun = !!rfc.protocol_run_id
+  const canAct = hasRun && actions.length > 0 && onAction
+
+  // For markdown-only RFCs (single "Content" section), extract a preview
+  const isSingleContent = rfc.sections.length === 1 && rfc.sections[0].title === 'Content'
+  const contentPreview = isSingleContent
+    ? extractContentPreview(rfc.sections[0].content, 200)
+    : null
 
   return (
     <Card
@@ -90,7 +121,6 @@ export function RfcCard({ rfc, onAction, onClick, className = '' }: RfcCardProps
           </div>
 
           <div className="flex items-center gap-2 flex-shrink-0">
-            {/* Importance badge */}
             <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${imp.bg} ${imp.text}`}>
               {rfc.importance}
             </span>
@@ -98,33 +128,57 @@ export function RfcCard({ rfc, onAction, onClick, className = '' }: RfcCardProps
           </div>
         </div>
 
-        {/* Date */}
-        <div className="flex items-center gap-1.5 text-xs text-gray-500">
-          <Calendar className="w-3 h-3" />
-          {formatDate(rfc.created_at)}
+        {/* Metadata row: date, creator, sections count, ID */}
+        <div className="flex items-center gap-3 text-xs text-gray-500 flex-wrap">
+          <span className="inline-flex items-center gap-1">
+            <Calendar className="w-3 h-3" />
+            {formatDate(rfc.created_at)}
+          </span>
+          {rfc.created_by && (
+            <span className="inline-flex items-center gap-1">
+              <User className="w-3 h-3" />
+              {rfc.created_by}
+            </span>
+          )}
+          <span className="inline-flex items-center gap-1">
+            <Hash className="w-3 h-3" />
+            {rfc.id.slice(0, 8)}
+          </span>
+          {rfc.sections.length > 1 && (
+            <span className="text-gray-600">
+              {rfc.sections.length} sections
+            </span>
+          )}
         </div>
 
-        {/* Section previews */}
-        {problem && (
-          <div className="space-y-0.5">
-            <span className="text-[10px] font-medium text-gray-500 uppercase tracking-wider">
-              Problem
-            </span>
-            <p className="text-xs text-gray-400 leading-relaxed">
-              {truncate(problem, 150)}
-            </p>
-          </div>
-        )}
-
-        {solution && (
-          <div className="space-y-0.5">
-            <span className="text-[10px] font-medium text-gray-500 uppercase tracking-wider">
-              Proposed Solution
-            </span>
-            <p className="text-xs text-gray-400 leading-relaxed">
-              {truncate(solution, 150)}
-            </p>
-          </div>
+        {/* Content preview — structured sections OR markdown preview */}
+        {contentPreview ? (
+          <p className="text-xs text-gray-400 leading-relaxed line-clamp-3">
+            {contentPreview}
+          </p>
+        ) : (
+          <>
+            {problem && (
+              <div className="space-y-0.5">
+                <span className="text-[10px] font-medium text-gray-500 uppercase tracking-wider">
+                  Problem
+                </span>
+                <p className="text-xs text-gray-400 leading-relaxed">
+                  {truncate(problem, 150)}
+                </p>
+              </div>
+            )}
+            {solution && (
+              <div className="space-y-0.5">
+                <span className="text-[10px] font-medium text-gray-500 uppercase tracking-wider">
+                  Proposed Solution
+                </span>
+                <p className="text-xs text-gray-400 leading-relaxed">
+                  {truncate(solution, 150)}
+                </p>
+              </div>
+            )}
+          </>
         )}
 
         {/* Tags */}
@@ -141,8 +195,8 @@ export function RfcCard({ rfc, onAction, onClick, className = '' }: RfcCardProps
           </div>
         )}
 
-        {/* Action buttons */}
-        {actions.length > 0 && onAction && (
+        {/* Action buttons — only show if protocol run is linked */}
+        {canAct && (
           <div className="flex items-center gap-2 pt-1 border-t border-border-subtle">
             {actions.includes('propose') && (
               <button
@@ -178,6 +232,14 @@ export function RfcCard({ rfc, onAction, onClick, className = '' }: RfcCardProps
                 Implement
               </button>
             )}
+          </div>
+        )}
+
+        {/* Warning: no protocol run linked */}
+        {!hasRun && actions.length > 0 && (
+          <div className="flex items-center gap-1.5 pt-1 border-t border-border-subtle text-[11px] text-amber-500/70">
+            <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+            <span>No protocol run linked — transitions unavailable</span>
           </div>
         )}
       </CardContent>

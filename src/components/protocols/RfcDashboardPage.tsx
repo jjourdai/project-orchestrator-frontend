@@ -111,13 +111,20 @@ export function RfcDashboardPage({ onRfcClick, className = '' }: RfcDashboardPag
   }, [rfcs])
 
   // Handle RFC action (transition)
+  const [actionError, setActionError] = useState<string | null>(null)
+
   const handleAction = useCallback(
     async (rfcId: string, action: 'propose' | 'accept' | 'reject' | 'implement') => {
+      setActionError(null)
       try {
         const updated = await rfcApi.transition(rfcId, action)
         setRfcs((prev) => prev.map((r) => (r.id === updated.id ? updated : r)))
       } catch (err) {
-        console.error(`Failed to ${action} RFC:`, err)
+        const msg = err instanceof Error ? err.message : `Failed to ${action} RFC`
+        const match = msg.match(/"error":"([^"]+)"/)
+        setActionError(match ? match[1] : msg)
+        // Auto-dismiss after 5s
+        setTimeout(() => setActionError(null), 5000)
       }
     },
     [],
@@ -155,6 +162,19 @@ export function RfcDashboardPage({ onRfcClick, className = '' }: RfcDashboardPag
           </button>
         </div>
       </div>
+
+      {/* Error toast */}
+      {actionError && (
+        <div className="mx-6 mt-2 px-3 py-2 rounded-lg text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 flex items-center justify-between gap-2">
+          <span>{actionError}</span>
+          <button
+            onClick={() => setActionError(null)}
+            className="text-amber-400 hover:text-amber-200 text-[10px] font-medium shrink-0"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* Status filter tabs */}
       <div className="flex items-center gap-1 px-6 py-2 border-b border-border-subtle overflow-x-auto scrollbar-thin">
