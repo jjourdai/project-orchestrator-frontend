@@ -134,6 +134,12 @@ export interface RfcSection {
   content: string
 }
 
+export interface RfcAvailableTransition {
+  trigger: string
+  target_state: string
+  guard?: string | null
+}
+
 export interface Rfc {
   id: string
   title: string
@@ -142,6 +148,8 @@ export interface Rfc {
   sections: RfcSection[]
   protocol_run_id?: string | null
   current_state?: string
+  /** Available FSM transitions from the current state (populated on GET detail) */
+  available_transitions?: RfcAvailableTransition[]
   created_at: string
   updated_at?: string
   created_by?: string

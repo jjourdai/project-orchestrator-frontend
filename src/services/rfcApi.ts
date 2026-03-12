@@ -41,7 +41,7 @@ export const rfcApi = {
   delete: (rfcId: string) =>
     api.delete(`/rfcs/${rfcId}`),
 
-  /** Transition the RFC status (triggers protocol event under the hood) */
-  transition: (rfcId: string, action: 'propose' | 'accept' | 'reject' | 'implement') =>
+  /** Fire an FSM transition on the RFC (trigger must match a valid transition from current state) */
+  transition: (rfcId: string, action: string) =>
     api.post<Rfc>(`/rfcs/${rfcId}/transition`, { action }),
 }

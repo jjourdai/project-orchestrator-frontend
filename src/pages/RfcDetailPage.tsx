@@ -57,12 +57,60 @@ const importanceConfig: Record<string, { dot: string; label: string; variant: 'e
   low:      { dot: 'bg-gray-400',   label: 'Low',      variant: 'default' },
 }
 
-const actionConfig = {
-  propose:   { label: 'Propose',          icon: Send,       cls: 'text-blue-400 bg-blue-500/10 border-blue-500/20 hover:bg-blue-500/25' },
-  accept:    { label: 'Accept',           icon: ThumbsUp,   cls: 'text-green-400 bg-green-500/10 border-green-500/20 hover:bg-green-500/25' },
-  reject:    { label: 'Reject',           icon: ThumbsDown, cls: 'text-red-400 bg-red-500/10 border-red-500/20 hover:bg-red-500/25' },
-  implement: { label: 'Mark Implemented', icon: Rocket,     cls: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20 hover:bg-emerald-500/25' },
-} as const
+// Visual config for known triggers — unknown triggers get a neutral style
+const triggerStyles: Record<string, { icon: typeof Send; cls: string }> = {
+  propose:        { icon: Send,       cls: 'text-blue-400 bg-blue-500/10 border-blue-500/20 hover:bg-blue-500/25' },
+  submit_review:  { icon: Send,       cls: 'text-blue-400 bg-blue-500/10 border-blue-500/20 hover:bg-blue-500/25' },
+  accept:         { icon: ThumbsUp,   cls: 'text-green-400 bg-green-500/10 border-green-500/20 hover:bg-green-500/25' },
+  reject:         { icon: ThumbsDown, cls: 'text-red-400 bg-red-500/10 border-red-500/20 hover:bg-red-500/25' },
+  supersede:      { icon: ThumbsDown, cls: 'text-amber-400 bg-amber-500/10 border-amber-500/20 hover:bg-amber-500/25' },
+  revise:         { icon: Send,       cls: 'text-orange-400 bg-orange-500/10 border-orange-500/20 hover:bg-orange-500/25' },
+  start_planning: { icon: Rocket,     cls: 'text-violet-400 bg-violet-500/10 border-violet-500/20 hover:bg-violet-500/25' },
+  start_work:     { icon: Rocket,     cls: 'text-indigo-400 bg-indigo-500/10 border-indigo-500/20 hover:bg-indigo-500/25' },
+  complete:       { icon: Rocket,     cls: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20 hover:bg-emerald-500/25' },
+  replan:         { icon: Send,       cls: 'text-orange-400 bg-orange-500/10 border-orange-500/20 hover:bg-orange-500/25' },
+}
+
+const defaultTriggerStyle = { icon: ArrowRight, cls: 'text-gray-300 bg-white/[0.06] border-white/[0.1] hover:bg-white/[0.1]' }
+
+/** Format a trigger name for display: submit_review → Submit Review */
+function formatTrigger(trigger: string): string {
+  return trigger.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
+// ---------------------------------------------------------------------------
+// Fallback transitions when backend doesn't return available_transitions
+// (mirrors the rfc-lifecycle FSM defined server-side)
+// ---------------------------------------------------------------------------
+
+const FALLBACK_TRANSITIONS: Record<string, { trigger: string; target_state: string }[]> = {
+  // Keyed by FSM state name (not simplified RFC status)
+  draft:        [{ trigger: 'propose', target_state: 'proposed' }],
+  proposed:     [
+    { trigger: 'submit_review', target_state: 'under_review' },
+    { trigger: 'reject',        target_state: 'rejected' },
+  ],
+  under_review: [
+    { trigger: 'accept',  target_state: 'accepted' },
+    { trigger: 'revise',  target_state: 'proposed' },
+    { trigger: 'reject',  target_state: 'rejected' },
+  ],
+  accepted:     [
+    { trigger: 'start_planning', target_state: 'planning' },
+    { trigger: 'reject',         target_state: 'rejected' },
+  ],
+  planning:     [
+    { trigger: 'start_work', target_state: 'in_progress' },
+    { trigger: 'replan',     target_state: 'accepted' },
+  ],
+  in_progress:  [
+    { trigger: 'complete', target_state: 'implemented' },
+    { trigger: 'replan',   target_state: 'planning' },
+  ],
+  implemented:  [],
+  rejected:     [],
+  superseded:   [],
+}
 
 // ---------------------------------------------------------------------------
 // Lifecycle pipeline steps
@@ -103,14 +151,6 @@ function relativeTime(iso: string): string {
   return `${months} month${months > 1 ? 's' : ''} ago`
 }
 
-function availableActions(status: RfcStatus): ('propose' | 'accept' | 'reject' | 'implement')[] {
-  switch (status) {
-    case 'draft':    return ['propose']
-    case 'proposed': return ['accept', 'reject']
-    case 'accepted': return ['implement']
-    default:         return []
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Section nav config
@@ -243,17 +283,17 @@ export function RfcDetailPage() {
     fetchRfc()
   }, [fetchRfc])
 
-  // Handle transition action
+  // Handle any FSM transition (trigger comes from backend available_transitions)
   const handleAction = useCallback(
-    async (action: 'propose' | 'accept' | 'reject' | 'implement') => {
+    async (trigger: string) => {
       if (!rfcId) return
-      setTransitioning(action)
+      setTransitioning(trigger)
       try {
-        const updated = await rfcApi.transition(rfcId, action)
+        const updated = await rfcApi.transition(rfcId, trigger)
         setRfc(updated)
-        toast.success(`RFC ${action === 'implement' ? 'marked as implemented' : action + 'd'} successfully`)
+        toast.success(`Transition "${formatTrigger(trigger)}" applied successfully`)
       } catch (err) {
-        const msg = err instanceof Error ? err.message : `Failed to ${action} RFC`
+        const msg = err instanceof Error ? err.message : `Failed to fire "${trigger}"`
         const match = msg.match(/"error":"([^"]+)"/)
         toast.error(match ? match[1] : msg)
       } finally {
@@ -278,8 +318,10 @@ export function RfcDetailPage() {
   }
 
   const imp = importanceConfig[rfc.importance] ?? importanceConfig.medium
-  const actions = availableActions(rfc.status)
-  const hasRun = !!rfc.protocol_run_id
+  const backendTransitions = rfc.available_transitions ?? []
+  const transitions = backendTransitions.length > 0
+    ? backendTransitions
+    : FALLBACK_TRANSITIONS[rfc.current_state ?? rfc.status] ?? []
   const isSingleContent = rfc.sections.length === 1 && rfc.sections[0].title === 'Content'
   const visibleTags = rfc.tags.filter((t) => !t.startsWith('rfc-'))
 
@@ -445,7 +487,7 @@ export function RfcDetailPage() {
             <CardTitle>Actions</CardTitle>
           </CardHeader>
           <CardContent>
-            {actions.length === 0 ? (
+            {transitions.length === 0 ? (
               <div className="flex items-center gap-3 py-2">
                 <CheckCircle2 className="w-5 h-5 text-gray-500" />
                 <div>
@@ -459,34 +501,25 @@ export function RfcDetailPage() {
                   </p>
                 </div>
               </div>
-            ) : !hasRun ? (
-              <div className="flex items-center gap-3 py-2 px-3 rounded-lg bg-amber-500/5 border border-amber-500/10">
-                <AlertTriangle className="w-5 h-5 text-amber-500/70 shrink-0" />
-                <div>
-                  <p className="text-sm text-amber-400">No protocol run linked</p>
-                  <p className="text-xs text-amber-500/50">
-                    Lifecycle transitions require a linked protocol run. Create one from the Protocols page.
-                  </p>
-                </div>
-              </div>
             ) : (
               <div className="space-y-3">
                 <p className="text-xs text-gray-500">
-                  Available transitions for <span className="text-gray-400 font-medium">{rfc.status}</span> state:
+                  Available transitions for <span className="text-gray-400 font-medium">{rfc.current_state ?? rfc.status}</span> state:
                 </p>
                 <div className="flex flex-wrap gap-3">
-                  {actions.map((action) => {
-                    const cfg = actionConfig[action]
-                    const Icon = cfg.icon
-                    const isLoading = transitioning === action
+                  {transitions.map((t) => {
+                    const style = triggerStyles[t.trigger] ?? defaultTriggerStyle
+                    const Icon = style.icon
+                    const isLoading = transitioning === t.trigger
                     return (
                       <button
-                        key={action}
-                        onClick={() => handleAction(action)}
+                        key={t.trigger}
+                        onClick={() => handleAction(t.trigger)}
                         disabled={!!transitioning}
+                        title={`→ ${t.target_state}`}
                         className={`
                           inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold
-                          border transition-all active:scale-[0.97] disabled:opacity-50 ${cfg.cls}
+                          border transition-all active:scale-[0.97] disabled:opacity-50 ${style.cls}
                         `}
                       >
                         {isLoading ? (
@@ -494,7 +527,7 @@ export function RfcDetailPage() {
                         ) : (
                           <Icon className="w-4 h-4" />
                         )}
-                        {cfg.label}
+                        {formatTrigger(t.trigger)}
                       </button>
                     )
                   })}
