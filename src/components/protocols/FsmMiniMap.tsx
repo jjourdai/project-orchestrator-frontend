@@ -71,7 +71,7 @@ function computeLayout(
     g.setNode(s.id, { width: NODE_W, height: NODE_H })
   }
   for (const t of transitions) {
-    g.setEdge(t.from_state_id, t.to_state_id)
+    g.setEdge(t.from_state, t.to_state)
   }
 
   dagre.layout(g)
@@ -85,19 +85,19 @@ function computeLayout(
       w: NODE_W,
       h: NODE_H,
       label: s.name,
-      isInitial: s.is_initial,
-      isTerminal: s.is_terminal,
+      isInitial: s.state_type === 'start',
+      isTerminal: s.state_type === 'terminal',
       isMacro: !!s.sub_protocol_id,
     }
   })
 
   const edges: LayoutEdge[] = transitions.map((t) => {
-    const edgeData = g.edge(t.from_state_id, t.to_state_id) as { points?: { x: number; y: number }[] }
+    const edgeData = g.edge(t.from_state, t.to_state) as { points?: { x: number; y: number }[] }
     return {
       id: t.id,
-      from: t.from_state_id,
-      to: t.to_state_id,
-      label: t.event,
+      from: t.from_state,
+      to: t.to_state,
+      label: t.trigger,
       points: edgeData?.points ?? [],
     }
   })

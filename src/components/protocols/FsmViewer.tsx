@@ -60,7 +60,7 @@ function layoutGraph(
   }
 
   for (const t of transitions) {
-    g.setEdge(t.from_state_id, t.to_state_id)
+    g.setEdge(t.from_state, t.to_state)
   }
 
   dagre.layout(g)
@@ -75,8 +75,8 @@ function layoutGraph(
       position: { x: pos.x - NODE_WIDTH / 2, y: pos.y - NODE_HEIGHT / 2 },
       data: {
         label: state.name,
-        isInitial: state.is_initial,
-        isTerminal: state.is_terminal,
+        isInitial: state.state_type === 'start',
+        isTerminal: state.state_type === 'terminal',
         isMacro,
         subProtocolId: state.sub_protocol_id,
         description: state.description,
@@ -86,9 +86,9 @@ function layoutGraph(
 
   const edges: Edge[] = transitions.map((t) => ({
     id: t.id,
-    source: t.from_state_id,
-    target: t.to_state_id,
-    label: t.event,
+    source: t.from_state,
+    target: t.to_state,
+    label: t.trigger,
     labelStyle: { fontSize: 10, fill: '#9ca3af' },
     style: { stroke: '#6b7280' },
     markerEnd: { type: MarkerType.ArrowClosed, color: '#6b7280', width: 16, height: 16 },

@@ -8,12 +8,14 @@
 
 export type ProtocolStatus = 'draft' | 'active' | 'archived'
 
+export type StateType = 'start' | 'intermediate' | 'terminal' | 'generator'
+
 export interface ProtocolState {
   id: string
   name: string
   description?: string
-  is_initial: boolean
-  is_terminal: boolean
+  /** Role of this state: start, intermediate, terminal, generator */
+  state_type: StateType
   /** When set, this state delegates to a sub-protocol (macro-state). */
   sub_protocol_id?: string | null
   metadata?: Record<string, unknown>
@@ -21,9 +23,9 @@ export interface ProtocolState {
 
 export interface ProtocolTransition {
   id: string
-  from_state_id: string
-  to_state_id: string
-  event: string
+  from_state: string
+  to_state: string
+  trigger: string
   guard?: string | null
   action?: string | null
   description?: string
