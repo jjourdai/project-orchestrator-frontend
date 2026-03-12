@@ -35,6 +35,7 @@ import {
   FeatureGraphDetailPage,
   ProtocolsPage,
   ProtocolDetailPage,
+  RfcDetailPage,
   AdminPage,
   RunnerDashboard,
 
@@ -171,6 +172,7 @@ function App() {
                         <Route path="protocols" element={<ProtocolsPage />} />
                         <Route path="protocols/:protocolId" element={<ProtocolDetailPage />} />
                         <Route path="rfcs" element={<RfcDashboardPage />} />
+                        <Route path="rfcs/:rfcId" element={<RfcDetailPage />} />
                         {/* Intelligence sub-views are now embedded inline in ProjectDetailPage */}
                         <Route path="projects/:projectSlug/intelligence" element={<ProjectDetailPage />} />
                         <Route path="admin" element={<AdminPage />} />

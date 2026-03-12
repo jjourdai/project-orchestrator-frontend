@@ -6,12 +6,14 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { FileText, Loader2, AlertCircle, RefreshCw } from 'lucide-react'
 import { RfcCard } from './RfcCard'
 import { rfcApi } from '@/services/rfcApi'
 import { workspacesApi } from '@/services'
 import { Select } from '@/components/ui'
 import { useWorkspaceSlug } from '@/hooks'
+import { workspacePath } from '@/utils/paths'
 import type { Rfc, RfcStatus } from '@/types/protocol'
 
 // ---------------------------------------------------------------------------
@@ -47,8 +49,13 @@ interface RfcDashboardPageProps {
 // Component
 // ---------------------------------------------------------------------------
 
-export function RfcDashboardPage({ onRfcClick, className = '' }: RfcDashboardPageProps) {
+export function RfcDashboardPage({ onRfcClick: externalOnRfcClick, className = '' }: RfcDashboardPageProps) {
   const wsSlug = useWorkspaceSlug()
+  const navigate = useNavigate()
+
+  const onRfcClick = externalOnRfcClick ?? ((rfcId: string) => {
+    navigate(workspacePath(wsSlug, `/rfcs/${rfcId}`))
+  })
 
   // ── Project selector ───────────────────────────────────────────────
   const [projects, setProjects] = useState<{ id: string; name: string; slug: string }[]>([])
