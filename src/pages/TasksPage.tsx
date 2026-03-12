@@ -21,7 +21,7 @@ import {
   SkeletonCard,
   PulseIndicator,
 } from '@/components/ui'
-import { useKanbanFilters, useViewMode, useConfirmDialog, useFormDialog, useToast, useMultiSelect, useInfiniteList, useWorkspaceSlug, useViewTransition } from '@/hooks'
+import { useKanbanFilters, useViewMode, useConfirmDialog, useFormDialog, useToast, useMultiSelect, useInfiniteList, useWorkspaceSlug, useViewTransition, useProjectFilter } from '@/hooks'
 import { KanbanFilterBar, UniversalKanban, createTaskKanbanConfig } from '@/components/kanban'
 import { EditTaskForm } from '@/components/forms'
 import type { EditTaskFormData } from '@/components/forms/EditTaskForm'
@@ -51,24 +51,27 @@ export function TasksPage() {
   const [editingTask, setEditingTask] = useState<TaskWithPlan | null>(null)
   const kanbanFilters = useKanbanFilters()
   const wsSlug = useWorkspaceSlug()
+  const { selectedProjectId, setSelectedProjectId, projectFilterParam, projectOptions } = useProjectFilter()
   const reducedMotion = useReducedMotion()
 
   // --- Infinite scroll for list mode (workspace-scoped) ---
   const listFilters = useMemo(
     () => ({
       status: statusFilter !== 'all' ? statusFilter : undefined,
+      project_id: projectFilterParam,
       _refresh: taskRefresh,
       _ws: wsSlug,
     }),
-    [statusFilter, taskRefresh, wsSlug],
+    [statusFilter, projectFilterParam, taskRefresh, wsSlug],
   )
 
   const listFetcher = useCallback(
-    (params: { limit: number; offset: number; status?: string }): Promise<PaginatedResponse<TaskWithPlan>> => {
+    (params: { limit: number; offset: number; status?: string; project_id?: string }): Promise<PaginatedResponse<TaskWithPlan>> => {
       return tasksApi.list({
         limit: params.limit,
         offset: params.offset,
         status: params.status,
+        project_id: params.project_id,
         workspace_slug: wsSlug,
       })
     },
@@ -213,12 +216,20 @@ export function TasksPage() {
       actions={
         <>
           {viewMode === 'list' && (
-            <Select
-              options={statusOptions}
-              value={statusFilter}
-              onChange={(value) => setStatusFilter(value as TaskStatus | 'all')}
-              className="w-full sm:w-40"
-            />
+            <>
+              <Select
+                options={projectOptions}
+                value={selectedProjectId}
+                onChange={setSelectedProjectId}
+                className="w-full sm:w-44"
+              />
+              <Select
+                options={statusOptions}
+                value={statusFilter}
+                onChange={(value) => setStatusFilter(value as TaskStatus | 'all')}
+                className="w-full sm:w-40"
+              />
+            </>
           )}
           <ViewToggle value={viewMode} onChange={setViewMode} />
         </>
