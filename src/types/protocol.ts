@@ -127,7 +127,10 @@ export interface FsmBreadcrumb {
 // RFC Types
 // ---------------------------------------------------------------------------
 
-export type RfcStatus = 'draft' | 'proposed' | 'accepted' | 'implemented' | 'rejected'
+export type RfcStatus =
+  | 'draft' | 'proposed' | 'under_review' | 'accepted'
+  | 'planning' | 'in_progress' | 'implemented'
+  | 'rejected' | 'superseded'
 
 export interface RfcSection {
   title: string

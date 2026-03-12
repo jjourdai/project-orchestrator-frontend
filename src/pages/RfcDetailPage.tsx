@@ -101,14 +101,17 @@ const FALLBACK_TRANSITIONS: Record<string, { trigger: string; target_state: stri
 // ---------------------------------------------------------------------------
 
 const LIFECYCLE_STEPS: { key: RfcStatus; label: string }[] = [
-  { key: 'draft',       label: 'Draft' },
-  { key: 'proposed',    label: 'Proposed' },
-  { key: 'accepted',    label: 'Accepted' },
-  { key: 'implemented', label: 'Implemented' },
+  { key: 'draft',        label: 'Draft' },
+  { key: 'proposed',     label: 'Proposed' },
+  { key: 'under_review', label: 'Review' },
+  { key: 'accepted',     label: 'Accepted' },
+  { key: 'planning',     label: 'Planning' },
+  { key: 'in_progress',  label: 'In Progress' },
+  { key: 'implemented',  label: 'Implemented' },
 ]
 
 function getLifecycleIndex(status: RfcStatus): number {
-  if (status === 'rejected') return -1
+  if (status === 'rejected' || status === 'superseded') return -1
   return LIFECYCLE_STEPS.findIndex((s) => s.key === status)
 }
 
@@ -314,7 +317,7 @@ export function RfcDetailPage() {
       {/* ── Header ──────────────────────────────────────────────────────── */}
       <PageHeader
         title={rfc.title}
-        status={<RfcStatusBadge status={rfc.status} />}
+        status={<RfcStatusBadge status={(rfc.current_state as RfcStatus) ?? rfc.status} />}
         metadata={[
           { label: 'Created', value: relativeTime(rfc.created_at) },
           ...(rfc.updated_at ? [{ label: 'Updated', value: relativeTime(rfc.updated_at) }] : []),
@@ -346,7 +349,7 @@ export function RfcDetailPage() {
           </CardHeader>
           <CardContent>
             <div className="flex items-center justify-center py-2">
-              <LifecycleProgress status={rfc.status} />
+              <LifecycleProgress status={(rfc.current_state as RfcStatus) ?? rfc.status} />
             </div>
           </CardContent>
         </Card>
@@ -360,7 +363,7 @@ export function RfcDetailPage() {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div className="space-y-1">
                 <p className="text-[11px] font-medium text-gray-500 uppercase tracking-wider">Status</p>
-                <RfcStatusBadge status={rfc.status} />
+                <RfcStatusBadge status={(rfc.current_state as RfcStatus) ?? rfc.status} />
               </div>
               <div className="space-y-1">
                 <p className="text-[11px] font-medium text-gray-500 uppercase tracking-wider">Importance</p>

@@ -27,12 +27,16 @@ interface StatusTab {
 }
 
 const STATUS_TABS: StatusTab[] = [
-  { key: 'all',         label: 'All',         color: 'text-gray-400' },
-  { key: 'draft',       label: 'Draft',       color: 'text-gray-400' },
-  { key: 'proposed',    label: 'Proposed',    color: 'text-blue-400' },
-  { key: 'accepted',    label: 'Accepted',    color: 'text-green-400' },
-  { key: 'implemented', label: 'Implemented', color: 'text-emerald-400' },
-  { key: 'rejected',    label: 'Rejected',    color: 'text-red-400' },
+  { key: 'all',          label: 'All',          color: 'text-gray-400' },
+  { key: 'draft',        label: 'Draft',        color: 'text-gray-400' },
+  { key: 'proposed',     label: 'Proposed',     color: 'text-blue-400' },
+  { key: 'under_review', label: 'Under Review', color: 'text-cyan-400' },
+  { key: 'accepted',     label: 'Accepted',     color: 'text-green-400' },
+  { key: 'planning',     label: 'Planning',     color: 'text-violet-400' },
+  { key: 'in_progress',  label: 'In Progress',  color: 'text-indigo-400' },
+  { key: 'implemented',  label: 'Implemented',  color: 'text-emerald-400' },
+  { key: 'rejected',     label: 'Rejected',     color: 'text-red-400' },
+  { key: 'superseded',   label: 'Superseded',   color: 'text-amber-400' },
 ]
 
 // ---------------------------------------------------------------------------
@@ -105,14 +109,15 @@ export function RfcDashboardPage({ onRfcClick: externalOnRfcClick, className = '
   // Filter by active tab
   const filteredRfcs = useMemo(() => {
     if (activeTab === 'all') return rfcs
-    return rfcs.filter((rfc) => rfc.status === activeTab)
+    return rfcs.filter((rfc) => (rfc.current_state ?? rfc.status) === activeTab)
   }, [rfcs, activeTab])
 
   // Count by status for tab badges
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = { all: rfcs.length }
     for (const rfc of rfcs) {
-      counts[rfc.status] = (counts[rfc.status] ?? 0) + 1
+      const s = rfc.current_state ?? rfc.status
+      counts[s] = (counts[s] ?? 0) + 1
     }
     return counts
   }, [rfcs])

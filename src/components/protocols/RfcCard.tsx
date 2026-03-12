@@ -28,8 +28,10 @@ import type { Rfc, RfcStatus } from '@/types/protocol'
 
 const statusBorder: Record<RfcStatus, string> = {
   draft: 'border-l-gray-500', proposed: 'border-l-blue-500',
-  accepted: 'border-l-green-500', implemented: 'border-l-emerald-500',
-  rejected: 'border-l-red-500',
+  under_review: 'border-l-cyan-500', accepted: 'border-l-green-500',
+  planning: 'border-l-violet-500', in_progress: 'border-l-indigo-500',
+  implemented: 'border-l-emerald-500', rejected: 'border-l-red-500',
+  superseded: 'border-l-amber-500',
 }
 
 const impDot: Record<string, string> = {
@@ -119,7 +121,7 @@ export function RfcCard({ rfc, onAction, onClick, className = '' }: RfcCardProps
     <Card
       onClick={onClick ? () => onClick(rfc.id) : undefined}
       className={`
-        !rounded-xl border-l-[3px] ${statusBorder[rfc.status]}
+        !rounded-xl border-l-[3px] ${statusBorder[(rfc.current_state as RfcStatus) ?? rfc.status]}
         ${onClick ? 'cursor-pointer hover:border-white/[0.12] transition-all group' : ''}
         ${className}
       `}
@@ -132,7 +134,7 @@ export function RfcCard({ rfc, onAction, onClick, className = '' }: RfcCardProps
 
         {/* Metadata row */}
         <div className="flex items-center gap-2 flex-wrap">
-          <RfcStatusBadge status={rfc.status} />
+          <RfcStatusBadge status={(rfc.current_state as RfcStatus) ?? rfc.status} />
           <span className={`w-2 h-2 rounded-full ${impDot[rfc.importance] ?? impDot.medium}`} title={rfc.importance} />
           <span className="text-[11px] text-gray-500 inline-flex items-center gap-1">
             <Calendar className="w-3 h-3" />
