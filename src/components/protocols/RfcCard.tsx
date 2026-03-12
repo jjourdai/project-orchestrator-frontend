@@ -16,7 +16,7 @@ import {
   Send,
   ChevronRight,
   BookOpen,
-  AlertTriangle,
+  ArrowRight,
 } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import { RfcStatusBadge } from './RfcStatusBadge'
@@ -36,12 +36,37 @@ const impDot: Record<string, string> = {
   critical: 'bg-red-400', high: 'bg-orange-400', medium: 'bg-yellow-400', low: 'bg-gray-500',
 }
 
-const actionCfg = {
-  propose:   { label: 'Propose',   icon: Send,       cls: 'text-blue-400 bg-blue-500/10 border-blue-500/20 hover:bg-blue-500/20' },
-  accept:    { label: 'Accept',    icon: ThumbsUp,   cls: 'text-green-400 bg-green-500/10 border-green-500/20 hover:bg-green-500/20' },
-  reject:    { label: 'Reject',    icon: ThumbsDown, cls: 'text-red-400 bg-red-500/10 border-red-500/20 hover:bg-red-500/20' },
-  implement: { label: 'Implement', icon: Rocket,     cls: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20 hover:bg-emerald-500/20' },
-} as const
+// Trigger styles — same as RfcDetailPage
+const triggerStyles: Record<string, { icon: typeof Send; cls: string }> = {
+  propose:        { icon: Send,       cls: 'text-blue-400 bg-blue-500/10 border-blue-500/20 hover:bg-blue-500/20' },
+  submit_review:  { icon: Send,       cls: 'text-blue-400 bg-blue-500/10 border-blue-500/20 hover:bg-blue-500/20' },
+  accept:         { icon: ThumbsUp,   cls: 'text-green-400 bg-green-500/10 border-green-500/20 hover:bg-green-500/20' },
+  reject:         { icon: ThumbsDown, cls: 'text-red-400 bg-red-500/10 border-red-500/20 hover:bg-red-500/20' },
+  supersede:      { icon: ThumbsDown, cls: 'text-amber-400 bg-amber-500/10 border-amber-500/20 hover:bg-amber-500/20' },
+  revise:         { icon: Send,       cls: 'text-orange-400 bg-orange-500/10 border-orange-500/20 hover:bg-orange-500/20' },
+  start_planning: { icon: Rocket,     cls: 'text-violet-400 bg-violet-500/10 border-violet-500/20 hover:bg-violet-500/20' },
+  start_work:     { icon: Rocket,     cls: 'text-indigo-400 bg-indigo-500/10 border-indigo-500/20 hover:bg-indigo-500/20' },
+  complete:       { icon: Rocket,     cls: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20 hover:bg-emerald-500/20' },
+  replan:         { icon: Send,       cls: 'text-orange-400 bg-orange-500/10 border-orange-500/20 hover:bg-orange-500/20' },
+}
+const defaultTriggerStyle = { icon: ArrowRight, cls: 'text-gray-300 bg-white/[0.06] border-white/[0.1] hover:bg-white/[0.1]' }
+
+// Fallback transitions keyed by FSM state name (mirrors rfc-lifecycle FSM)
+const FALLBACK_TRANSITIONS: Record<string, { trigger: string; target_state: string }[]> = {
+  draft:        [{ trigger: 'propose', target_state: 'proposed' }],
+  proposed:     [{ trigger: 'submit_review', target_state: 'under_review' }, { trigger: 'reject', target_state: 'rejected' }],
+  under_review: [{ trigger: 'accept', target_state: 'accepted' }, { trigger: 'revise', target_state: 'proposed' }, { trigger: 'reject', target_state: 'rejected' }],
+  accepted:     [{ trigger: 'start_planning', target_state: 'planning' }, { trigger: 'reject', target_state: 'rejected' }],
+  planning:     [{ trigger: 'start_work', target_state: 'in_progress' }, { trigger: 'replan', target_state: 'accepted' }],
+  in_progress:  [{ trigger: 'complete', target_state: 'implemented' }, { trigger: 'replan', target_state: 'planning' }],
+  implemented:  [],
+  rejected:     [],
+  superseded:   [],
+}
+
+function formatTrigger(trigger: string): string {
+  return trigger.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -67,28 +92,23 @@ function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
-function actions(s: RfcStatus): ('propose' | 'accept' | 'reject' | 'implement')[] {
-  if (s === 'draft') return ['propose']
-  if (s === 'proposed') return ['accept', 'reject']
-  if (s === 'accepted') return ['implement']
-  return []
-}
-
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
 interface RfcCardProps {
   rfc: Rfc
-  onAction?: (id: string, action: 'propose' | 'accept' | 'reject' | 'implement') => void
+  onAction?: (id: string, action: string) => void
   onClick?: (id: string) => void
   className?: string
 }
 
 export function RfcCard({ rfc, onAction, onClick, className = '' }: RfcCardProps) {
-  const acts = actions(rfc.status)
-  const hasRun = !!rfc.protocol_run_id
-  const canAct = hasRun && acts.length > 0 && onAction
+  const backendTransitions = rfc.available_transitions ?? []
+  const transitions = backendTransitions.length > 0
+    ? backendTransitions
+    : FALLBACK_TRANSITIONS[rfc.current_state ?? rfc.status] ?? []
+  const canAct = transitions.length > 0 && onAction
 
   const isMd = rfc.sections.length === 1 && rfc.sections[0].title === 'Content'
   const preview = isMd
@@ -134,26 +154,20 @@ export function RfcCard({ rfc, onAction, onClick, className = '' }: RfcCardProps
           </p>
         )}
 
-        {/* Actions or warning */}
+        {/* Actions */}
         {canAct && (
           <div className="flex items-center gap-1.5 pt-2 border-t border-white/[0.05]">
-            {acts.map((a) => {
-              const c = actionCfg[a]; const I = c.icon
+            {transitions.map((t) => {
+              const style = triggerStyles[t.trigger] ?? defaultTriggerStyle
+              const Icon = style.icon
               return (
-                <button key={a} onClick={(e) => { e.stopPropagation(); onAction(rfc.id, a) }}
-                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold border transition-colors ${c.cls}`}>
-                  <I className="w-3 h-3" />{c.label}
+                <button key={t.trigger} onClick={(e) => { e.stopPropagation(); onAction!(rfc.id, t.trigger) }}
+                  title={`→ ${t.target_state}`}
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold border transition-colors ${style.cls}`}>
+                  <Icon className="w-3 h-3" />{formatTrigger(t.trigger)}
                 </button>
               )
             })}
-            {onClick && <ChevronRight className="w-3.5 h-3.5 text-gray-700 group-hover:text-gray-400 ml-auto" />}
-          </div>
-        )}
-
-        {!hasRun && acts.length > 0 && (
-          <div className="flex items-center gap-1.5 pt-2 border-t border-white/[0.05] text-[10px] text-amber-500/60">
-            <AlertTriangle className="w-3 h-3 shrink-0" />
-            <span>No protocol run linked</span>
             {onClick && <ChevronRight className="w-3.5 h-3.5 text-gray-700 group-hover:text-gray-400 ml-auto" />}
           </div>
         )}

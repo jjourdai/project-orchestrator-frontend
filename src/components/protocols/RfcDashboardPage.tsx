@@ -121,7 +121,7 @@ export function RfcDashboardPage({ onRfcClick: externalOnRfcClick, className = '
   const [actionError, setActionError] = useState<string | null>(null)
 
   const handleAction = useCallback(
-    async (rfcId: string, action: 'propose' | 'accept' | 'reject' | 'implement') => {
+    async (rfcId: string, action: string) => {
       setActionError(null)
       try {
         const updated = await rfcApi.transition(rfcId, action)
