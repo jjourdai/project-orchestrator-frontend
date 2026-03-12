@@ -51,14 +51,14 @@ const triggerStyles: Record<string, { icon: typeof Send; cls: string }> = {
 }
 const defaultTriggerStyle = { icon: ArrowRight, cls: 'text-gray-300 bg-white/[0.06] border-white/[0.1] hover:bg-white/[0.1]' }
 
-// Fallback transitions keyed by FSM state name (mirrors rfc-lifecycle FSM)
+// Exact mirror of rfc-lifecycle protocol (549d57c3) transitions
 const FALLBACK_TRANSITIONS: Record<string, { trigger: string; target_state: string }[]> = {
-  draft:        [{ trigger: 'propose', target_state: 'proposed' }],
-  proposed:     [{ trigger: 'submit_review', target_state: 'under_review' }, { trigger: 'reject', target_state: 'rejected' }],
-  under_review: [{ trigger: 'accept', target_state: 'accepted' }, { trigger: 'revise', target_state: 'proposed' }, { trigger: 'reject', target_state: 'rejected' }],
-  accepted:     [{ trigger: 'start_planning', target_state: 'planning' }, { trigger: 'reject', target_state: 'rejected' }],
-  planning:     [{ trigger: 'start_work', target_state: 'in_progress' }, { trigger: 'replan', target_state: 'accepted' }],
-  in_progress:  [{ trigger: 'complete', target_state: 'implemented' }, { trigger: 'replan', target_state: 'planning' }],
+  draft:        [{ trigger: 'propose', target_state: 'proposed' }, { trigger: 'supersede', target_state: 'superseded' }],
+  proposed:     [{ trigger: 'submit_review', target_state: 'under_review' }, { trigger: 'reject', target_state: 'rejected' }, { trigger: 'supersede', target_state: 'superseded' }],
+  under_review: [{ trigger: 'accept', target_state: 'accepted' }, { trigger: 'revise', target_state: 'draft' }, { trigger: 'reject', target_state: 'rejected' }, { trigger: 'supersede', target_state: 'superseded' }],
+  accepted:     [{ trigger: 'start_planning', target_state: 'planning' }, { trigger: 'supersede', target_state: 'superseded' }],
+  planning:     [{ trigger: 'start_work', target_state: 'in_progress' }, { trigger: 'supersede', target_state: 'superseded' }],
+  in_progress:  [{ trigger: 'complete', target_state: 'implemented' }, { trigger: 'replan', target_state: 'planning' }, { trigger: 'supersede', target_state: 'superseded' }],
   implemented:  [],
   rejected:     [],
   superseded:   [],
