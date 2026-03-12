@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { Outlet, NavLink, useLocation, useParams } from 'react-router-dom'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { Menu, Home, Flag, Box, ClipboardList, CheckCircle2, FileText, Scale, Code, Brain, GitGraph, ChevronLeft, ChevronRight, MessageCircle, Settings } from 'lucide-react'
+import { Menu, Home, Flag, Box, ClipboardList, CheckCircle2, FileText, Scale, Code, Brain, GitGraph, Workflow, ScrollText, ChevronLeft, ChevronRight, MessageCircle, Settings } from 'lucide-react'
 import { sidebarCollapsedAtom, chatPanelModeAtom, chatPanelWidthAtom, eventBusStatusAtom, workspacesAtom, activeWorkspaceAtom, workspaceRefreshAtom } from '@/atoms'
 import { ToastContainer, Branding } from '@/components/ui'
 import { ChatPanel } from '@/components/chat'
@@ -46,9 +46,11 @@ function SidebarContent({ collapsed, trafficLightPad, wsSlug, onNavClick }: { co
     {
       label: 'Knowledge',
       items: [
+        { name: 'RFCs', href: workspacePath(wsSlug, '/rfcs'), icon: ScrollText },
+        { name: 'Protocols', href: workspacePath(wsSlug, '/protocols'), icon: Workflow },
+        { name: 'Skills', href: workspacePath(wsSlug, '/skills'), icon: Brain },
         { name: 'Notes', href: workspacePath(wsSlug, '/notes'), icon: FileText },
         { name: 'Decisions', href: workspacePath(wsSlug, '/decisions'), icon: Scale },
-        { name: 'Skills', href: workspacePath(wsSlug, '/skills'), icon: Brain },
         { name: 'Code', href: workspacePath(wsSlug, '/code'), icon: Code },
         { name: 'Feature Graphs', href: workspacePath(wsSlug, '/feature-graphs'), icon: GitGraph },
       ],
@@ -368,6 +370,8 @@ function Breadcrumb({ pathname, workspaceName }: { pathname: string; workspaceNa
       skills: 'Skills',
       'project-milestones': 'Milestones',
       'feature-graphs': 'Feature Graphs',
+      protocols: 'Protocols',
+      rfcs: 'RFCs',
       intelligence: 'Intelligence',
       graph: 'Graph',
     }
