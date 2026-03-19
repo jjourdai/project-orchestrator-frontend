@@ -10,6 +10,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, ApiError, buildQuery } from './api'
+import type { GateResultsResponse, ProgressScoreResponse } from '@/types/chat'
 
 // ---------------------------------------------------------------------------
 // Types — aligned with backend RunStatus
@@ -64,6 +65,8 @@ export interface WaveSnapshot {
 export interface PlanRun {
   run_id: string
   plan_id: string
+  /** Plan title enriched by the backend (available on list endpoints). */
+  plan_title?: string
   total_tasks: number
   current_wave: number
   current_task_id: string | null
@@ -74,9 +77,9 @@ export interface PlanRun {
   git_branch: string
   started_at: string
   completed_at: string | null
-  status: 'Running' | 'Completed' | 'Failed' | 'Cancelled'
+  status: 'running' | 'completed' | 'failed' | 'cancelled' | 'budget_exceeded'
   cost_usd: number
-  triggered_by: string | { Manual: null } | { Trigger: { trigger_id: string } } | { Schedule: { cron: string } }
+  triggered_by: string | { chat: { session_id: string | null } } | { schedule: { trigger_id: string } } | { webhook: { trigger_id: string; payload_hash: string | null } } | { event: { trigger_id: string; source_event: string } }
   project_id: string | null
 }
 
@@ -95,6 +98,14 @@ export const runnerApi = {
 
   getStatus: (planId: string) =>
     api.get<RunSnapshot>(`/plans/${planId}/run/status`),
+
+  /** Get gate results for a pipeline run. */
+  getGates: (runId: string) =>
+    api.get<GateResultsResponse>(`/runs/${runId}/gates`),
+
+  /** Get progress score for a pipeline run. */
+  getProgress: (runId: string) =>
+    api.get<ProgressScoreResponse>(`/runs/${runId}/progress`),
 
   /**
    * Cancel an active run. The backend will gracefully stop all running agents.

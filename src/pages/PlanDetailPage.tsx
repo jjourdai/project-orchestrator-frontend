@@ -12,9 +12,13 @@ import { workspacePath } from '@/utils/paths'
 import { chatSuggestedProjectIdAtom, planRefreshAtom, taskRefreshAtom, projectRefreshAtom } from '@/atoms'
 import { CreateTaskForm, CreateConstraintForm, EditPlanForm } from '@/components/forms'
 import { UnifiedGraphSection, type GraphBreadcrumb } from '@/components/graph/UnifiedGraphSection'
+import { ImplementButton } from '@/components/pipeline/ImplementButton'
+import { ImplementDialog } from '@/components/pipeline/ImplementDialog'
 import { PlanGraphAdapter } from '@/adapters/PlanGraphAdapter'
 import { usePlanGraphData } from '@/hooks/usePlanGraphData'
 import { CommitList } from '@/components/commits'
+import { PlanRunHistory } from '@/components/runner/PlanRunHistory'
+import { useRunnerStatus } from '@/services/runner'
 import type { Plan, Decision, DecisionStatus, DependencyGraph, Task, Constraint, Step, Commit, PlanStatus, TaskStatus, StepStatus, PaginatedResponse, Project } from '@/types'
 import type { KanbanTask } from '@/components/kanban'
 
@@ -53,6 +57,10 @@ export function PlanDetailPage() {
   const [tasksCollapseAll, setTasksCollapseAll] = useState(0)
   const [tasksAllExpanded, setTasksAllExpanded] = useState(false)
   const [linkedMilestones, setLinkedMilestones] = useState<Array<{ id: string; title: string; href: string; type: 'workspace' | 'project' }>>([])
+  const [implementDialogOpen, setImplementDialogOpen] = useState(false)
+  const [implementLoading, setImplementLoading] = useState(false)
+  // Detect active pipeline run — used to hide/disable implement button
+  const { isRunning: hasPipelineRunning } = useRunnerStatus(planId)
   // Plan graph data for UnifiedGraphSection (replaces inline graph section)
   const planGraphData = usePlanGraphData(planId, plan?.title, linkedProject?.slug)
 
@@ -274,7 +282,7 @@ export function PlanDetailPage() {
     })
   }
 
-  const sectionIds = ['overview', 'tasks', 'constraints', 'decisions', 'commits', ...(graph && (graph.nodes || []).length > 0 ? ['graph'] : [])]
+  const sectionIds = ['overview', 'runs', 'tasks', 'constraints', 'decisions', 'commits', ...(graph && (graph.nodes || []).length > 0 ? ['graph'] : [])]
   const activeSection = useSectionObserver(sectionIds)
 
   // Build a fresh status map from local tasks state (includes optimistic updates)
@@ -314,6 +322,7 @@ export function PlanDetailPage() {
 
   const sections = [
     { id: 'overview', label: 'Overview' },
+    { id: 'runs', label: 'Runs' },
     ...(graph && (graph.nodes || []).length > 0 ? [{ id: 'graph', label: 'Waves', count: (graph.nodes || []).length }] : []),
     { id: 'tasks', label: 'Tasks', count: tasks.length },
     { id: 'commits', label: 'Commits', count: commits.length },
@@ -365,6 +374,18 @@ export function PlanDetailPage() {
           { label: 'Created by', value: plan.created_by },
           { label: 'Created', value: new Date(plan.created_at).toLocaleDateString() },
         ]}
+        actions={
+          // Only show Implement button for actionable statuses (approved, in_progress)
+          // Hide for draft, completed, cancelled — and disable if a run is already active
+          (plan.status === 'approved' || plan.status === 'in_progress') ? (
+            <ImplementButton
+              mode="plan"
+              entityId={plan.id}
+              onClick={() => setImplementDialogOpen(true)}
+              disabled={hasPipelineRunning}
+            />
+          ) : undefined
+        }
         overflowActions={[
           { label: 'Runner Dashboard', onClick: () => navigate(workspacePath(wsSlug, `/plans/${plan.id}/runner`), { type: 'card-click' }) },
           { label: 'Edit', onClick: () => editPlanDialog.open({ title: 'Edit Plan' }) },
@@ -421,6 +442,27 @@ export function PlanDetailPage() {
         <StatCard label="Failed" value={tasksByStatus.failed.length} color="red" />
       </div>
 
+      </section>
+
+      {/* Pipeline Runs */}
+      <section id="runs" className="scroll-mt-20">
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between w-full">
+              <CardTitle>Pipeline Runs</CardTitle>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => navigate(workspacePath(wsSlug, `/plans/${plan.id}/runner`), { type: 'card-click' })}
+              >
+                Runner Dashboard
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <PlanRunHistory planIds={plan.id} maxRuns={5} />
+          </CardContent>
+        </Card>
       </section>
 
       {/* Execution Waves / Dependency Graph — unified via GraphAdapter */}
@@ -669,6 +711,23 @@ export function PlanDetailPage() {
       </FormDialog>
       <LinkEntityDialog {...linkDialog.dialogProps} />
       <ConfirmDialog {...confirmDialog.dialogProps} />
+      <ImplementDialog
+        open={implementDialogOpen}
+        onClose={() => setImplementDialogOpen(false)}
+        onConfirm={async () => {
+          setImplementLoading(true)
+          try {
+            // Navigate to runner dashboard to start/monitor the run
+            navigate(workspacePath(wsSlug, `/plans/${plan.id}/runner`), { type: 'card-click' })
+          } finally {
+            setImplementLoading(false)
+            setImplementDialogOpen(false)
+          }
+        }}
+        mode="plan"
+        entityTitle={plan.title || 'Untitled Plan'}
+        loading={implementLoading}
+      />
 
     </div>
   )

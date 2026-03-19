@@ -95,18 +95,23 @@ function progressPct(run: PlanRun): number {
 }
 
 function triggerLabel(triggered_by: PlanRun['triggered_by']): string {
-  if (typeof triggered_by === 'string') return triggered_by
-  if ('Manual' in triggered_by) return 'Manual'
-  if ('Trigger' in triggered_by) return 'Event Trigger'
-  if ('Schedule' in triggered_by) return 'Schedule'
+  if (typeof triggered_by === 'string') {
+    // "manual" or other plain string from serde snake_case
+    return triggered_by.charAt(0).toUpperCase() + triggered_by.slice(1)
+  }
+  if ('chat' in triggered_by) return 'Chat'
+  if ('schedule' in triggered_by) return 'Schedule'
+  if ('webhook' in triggered_by) return 'Webhook'
+  if ('event' in triggered_by) return 'Event'
   return 'Unknown'
 }
 
 const runStatusConfig: Record<string, { label: string; variant: 'success' | 'error' | 'info' | 'default' | 'warning'; icon: typeof Play }> = {
-  Running:   { label: 'Running',   variant: 'info',    icon: Activity },
-  Completed: { label: 'Completed', variant: 'success', icon: CheckCircle2 },
-  Failed:    { label: 'Failed',    variant: 'error',   icon: XCircle },
-  Cancelled: { label: 'Cancelled', variant: 'default', icon: Ban },
+  running:          { label: 'Running',          variant: 'info',    icon: Activity },
+  completed:        { label: 'Completed',        variant: 'success', icon: CheckCircle2 },
+  failed:           { label: 'Failed',           variant: 'error',   icon: XCircle },
+  cancelled:        { label: 'Cancelled',        variant: 'default', icon: Ban },
+  budget_exceeded:  { label: 'Budget Exceeded',  variant: 'warning', icon: Ban },
 }
 
 // ---------------------------------------------------------------------------
@@ -145,16 +150,17 @@ function RunCard({
   planTitle: string
   onViewDetails: (planId: string) => void
 }) {
-  const statusCfg = runStatusConfig[run.status] ?? runStatusConfig.Running
+  const statusCfg = runStatusConfig[run.status] ?? runStatusConfig.running
   const StatusIcon = statusCfg.icon
   const progress = progressPct(run)
   const elapsed = elapsedSecs(run)
 
   const statusColors: Record<string, string> = {
-    Running: 'border-l-blue-500',
-    Completed: 'border-l-green-500',
-    Failed: 'border-l-red-500',
-    Cancelled: 'border-l-gray-500',
+    running: 'border-l-blue-500',
+    completed: 'border-l-green-500',
+    failed: 'border-l-red-500',
+    cancelled: 'border-l-gray-500',
+    budget_exceeded: 'border-l-yellow-500',
   }
 
   return (
@@ -237,7 +243,6 @@ export function PipelineDashboardPage() {
 
   const [runs, setRuns] = useState<PlanRun[]>([])
   const [readyPlans, setReadyPlans] = useState<Plan[]>([])
-  const [planTitles, setPlanTitles] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -245,35 +250,27 @@ export function PipelineDashboardPage() {
   const [hasMore, setHasMore] = useState(true)
 
   const sentinelRef = useRef<HTMLDivElement | null>(null)
-  const planTitlesRef = useRef<Map<string, string>>(new Map())
 
-  // ── Fetch plan titles for new plan IDs ─────────────────────────────────
-  const fetchPlanTitles = useCallback(async (newRuns: PlanRun[]) => {
-    const existing = planTitlesRef.current
-    const newPlanIds = [...new Set(newRuns.map(r => r.plan_id))].filter(id => !existing.has(id))
-    if (newPlanIds.length === 0) return
+  // Track whether initial data has been loaded at least once
+  const hasLoadedOnce = useRef(false)
 
-    await Promise.all(
-      newPlanIds.map(async (pid) => {
-        try {
-          const plan = await plansApi.get(pid)
-          if (plan?.title) existing.set(pid, plan.title)
-        } catch {
-          // Plan may have been deleted
-        }
-      })
-    )
-    planTitlesRef.current = new Map(existing)
-    setPlanTitles(new Map(existing))
-  }, [])
+  // Refs to avoid re-creating loadMore on every state change (prevents infinite loop)
+  const runsRef = useRef(runs)
+  runsRef.current = runs
+  const loadingMoreRef = useRef(loadingMore)
+  loadingMoreRef.current = loadingMore
+  const hasMoreRef = useRef(hasMore)
+  hasMoreRef.current = hasMore
 
   // ── Initial fetch ──────────────────────────────────────────────────────
   const fetchInitial = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    setRuns([])
-    setHasMore(true)
-    planTitlesRef.current = new Map()
+    // Only show loading skeleton on the FIRST load, not during polls
+    const isFirstLoad = !hasLoadedOnce.current
+    if (isFirstLoad) {
+      setLoading(true)
+      setError(null)
+    }
+    // Do NOT reset runs/planTitlesRef during polls — avoid flicker
 
     try {
       const status = filterToStatus(viewFilter)
@@ -295,24 +292,27 @@ export function PipelineDashboardPage() {
       }
       setReadyPlans(merged)
 
-      await fetchPlanTitles(batch)
+      hasLoadedOnce.current = true
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load pipeline data')
     } finally {
-      setLoading(false)
+      if (isFirstLoad) {
+        setLoading(false)
+      }
     }
-  }, [viewFilter, wsSlug, fetchPlanTitles])
+  }, [viewFilter, wsSlug])
 
   // ── Load more (infinite scroll) ────────────────────────────────────────
   const loadMore = useCallback(async () => {
-    if (loadingMore || !hasMore) return
+    if (loadingMoreRef.current || !hasMoreRef.current) return
     setLoadingMore(true)
 
     try {
       const status = filterToStatus(viewFilter)
+      const currentRuns = runsRef.current
       const batch = await runnerApi.listAllRuns({
         limit: PAGE_SIZE,
-        offset: runs.length,
+        offset: currentRuns.length,
         status,
         workspace_slug: wsSlug,
       })
@@ -323,30 +323,30 @@ export function PipelineDashboardPage() {
 
       if (batch.length > 0) {
         // Deduplicate by run_id
-        const existingIds = new Set(runs.map(r => r.run_id))
-        const newRuns = batch.filter(r => !existingIds.has(r.run_id))
-        if (newRuns.length > 0) {
-          setRuns(prev => [...prev, ...newRuns])
-          await fetchPlanTitles(newRuns)
-        }
+        setRuns(prev => {
+          const existingIds = new Set(prev.map(r => r.run_id))
+          const newRuns = batch.filter(r => !existingIds.has(r.run_id))
+          return newRuns.length > 0 ? [...prev, ...newRuns] : prev
+        })
       }
     } catch {
       // Silently fail on load-more — the user still has existing data
     } finally {
       setLoadingMore(false)
     }
-  }, [loadingMore, hasMore, viewFilter, wsSlug, runs, fetchPlanTitles])
+  }, [viewFilter, wsSlug])
 
   // ── Effects ────────────────────────────────────────────────────────────
 
   // Initial fetch on mount and when filter changes
   useEffect(() => {
+    hasLoadedOnce.current = false
     fetchInitial()
   }, [fetchInitial])
 
   // Auto-refresh if any run is active (poll every 5s)
   useEffect(() => {
-    const hasActive = runs.some(r => r.status === 'Running')
+    const hasActive = runs.some(r => r.status === 'running')
     if (!hasActive) return
 
     const timer = setInterval(() => {
@@ -384,9 +384,9 @@ export function PipelineDashboardPage() {
   // ── Stats (computed from loaded runs — approximate) ────────────────────
   const stats = useMemo(() => ({
     totalRuns: runs.length,
-    running: runs.filter(r => r.status === 'Running').length,
-    completed: runs.filter(r => r.status === 'Completed').length,
-    failed: runs.filter(r => r.status === 'Failed' || r.status === 'Cancelled').length,
+    running: runs.filter(r => r.status === 'running').length,
+    completed: runs.filter(r => r.status === 'completed').length,
+    failed: runs.filter(r => r.status === 'failed' || r.status === 'cancelled' || r.status === 'budget_exceeded').length,
     totalCost: runs.reduce((acc, r) => acc + (r.cost_usd ?? 0), 0),
   }), [runs])
 
@@ -491,11 +491,11 @@ export function PipelineDashboardPage() {
         />
       ) : (
         <div className="space-y-3">
-          {runs.map((run) => (
+          {runs.map((run, i) => (
             <RunCard
-              key={run.run_id}
+              key={`${run.run_id}-${i}`}
               run={run}
-              planTitle={planTitles.get(run.plan_id) ?? `Plan ${run.plan_id.slice(0, 8)}...`}
+              planTitle={run.plan_title || `Plan ${run.plan_id.slice(0, 8)}...`}
               onViewDetails={handleViewDetails}
             />
           ))}
