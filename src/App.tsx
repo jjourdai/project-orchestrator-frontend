@@ -44,13 +44,15 @@ import {
   RunnerDashboard,
   PipelineDashboardPage,
   TriggerDashboardPage,
+  IntelligencePage,
 
+  ParticlesShowcasePage,
   NotFoundPage,
   SettingsPage,
   SetupWizard,
 } from '@/pages'
 import { RfcDashboardPage } from '@/components/protocols'
-// Intelligence sub-views are now embedded inline in ProjectDetailPage (lazy-loaded there)
+// Intelligence is a dedicated page — no longer embedded in ProjectDetailPage
 
 /**
  * Captures the `?from=tray` query parameter on first render and stores
@@ -181,12 +183,13 @@ function App() {
                         <Route path="protocols/:protocolId" element={<ProtocolDetailPage />} />
                         <Route path="rfcs" element={<RfcDashboardPage />} />
                         <Route path="rfcs/:rfcId" element={<RfcDetailPage />} />
-                        {/* Intelligence sub-views are now embedded inline in ProjectDetailPage */}
-                        <Route path="projects/:projectSlug/intelligence" element={<ProjectDetailPage />} />
+                        {/* Intelligence is now a dedicated page (layers, neural, behavioral) */}
+                        <Route path="projects/:projectSlug/intelligence" element={<IntelligencePage />} />
                         <Route path="pipelines" element={<PipelineDashboardPage />} />
                         <Route path="triggers" element={<TriggerDashboardPage />} />
                         <Route path="sharing" element={<SharingPage />} />
                         <Route path="neural-routing" element={<NeuralRoutingPage />} />
+                        <Route path="particles" element={<ParticlesShowcasePage />} />
                         <Route path="admin" element={<AdminPage />} />
                         <Route path="*" element={<NotFoundPage embedded />} />
                       </Route>

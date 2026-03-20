@@ -37,7 +37,7 @@ export interface RunSnapshot {
   running: boolean
   run_id: string | null
   plan_id: string | null
-  status: 'running' | 'completed' | 'failed' | 'cancelled' | null
+  status: 'running' | 'completed' | 'failed' | 'cancelled' | 'budget_exceeded' | null
   current_wave: number | null
   current_task_id: string | null
   current_task_title: string | null
@@ -47,6 +47,7 @@ export interface RunSnapshot {
   tasks_total: number
   elapsed_secs: number
   cost_usd: number
+  max_cost_usd: number
 }
 
 /**
@@ -100,9 +101,10 @@ export const runnerApi = {
    * Returns 202 Accepted with run metadata.
    * Throws 409 if the plan already has an active run.
    */
-  startRun: async (planId: string, cwd: string, projectSlug?: string): Promise<StartRunResponse> => {
+  startRun: async (planId: string, cwd: string, projectSlug?: string, maxCostUsd?: number): Promise<StartRunResponse> => {
     const body: Record<string, unknown> = { cwd, triggered_by: 'manual' }
     if (projectSlug) body.project_slug = projectSlug
+    if (maxCostUsd !== undefined && maxCostUsd > 0) body.max_cost_usd = maxCostUsd
     return api.post<StartRunResponse>(`/plans/${planId}/run`, body)
   },
 
@@ -126,11 +128,24 @@ export const runnerApi = {
     api.get<ProgressScoreResponse>(`/runs/${runId}/progress`),
 
   /**
+   * Update the budget limit of a running execution.
+   * Takes effect immediately on the next budget check in the execution loop.
+   */
+  updateBudget: async (planId: string, maxCostUsd: number): Promise<void> => {
+    await api.patch<void>(`/plans/${planId}/run/budget`, { max_cost_usd: maxCostUsd })
+  },
+
+  /**
    * Cancel an active run. The backend will gracefully stop all running agents.
    *
    * - 404 → no active run for this plan
    * - 409 → cancellation already in progress
    */
+  /** Retry a failed task within a run. */
+  retryTask: async (planId: string, taskId: string): Promise<void> => {
+    await api.post<void>(`/plans/${planId}/run/tasks/${taskId}/retry`)
+  },
+
   cancelRun: async (planId: string): Promise<void> => {
     try {
       await api.post<void>(`/plans/${planId}/run/cancel`)

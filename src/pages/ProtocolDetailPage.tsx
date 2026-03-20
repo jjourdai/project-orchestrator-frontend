@@ -18,6 +18,8 @@ import { RunStatusBadge } from '@/components/protocols/RunStatusBadge'
 import { GanttTimeline } from '@/components/protocols/GanttTimeline'
 import type { GanttRun } from '@/components/protocols/GanttTimeline'
 import { Spinner, ErrorState, EmptyState, Button } from '@/components/ui'
+import { ProtocolRunWidget } from '@/components/particles/widgets'
+import { useFeedbackVizData } from '@/hooks/useVizData'
 import { useWorkspaceSlug } from '@/hooks'
 import { workspacePath } from '@/utils/paths'
 import type { Protocol, ProtocolRun, ProtocolStatus } from '@/types/protocol'
@@ -66,6 +68,9 @@ export function ProtocolDetailPage() {
   const [error, setError] = useState<string | null>(null)
 
   const [activeTab, setActiveTab] = useState<Tab>('fsm')
+
+  // FSM highlight state (set by spiral marker click)
+  const [highlightedStateId, setHighlightedStateId] = useState<string | null>(null)
 
   // Runs tab state
   const [runs, setRuns] = useState<ProtocolRun[]>([])
@@ -202,7 +207,7 @@ export function ProtocolDetailPage() {
       {/* Tab content */}
       {activeTab === 'fsm' && (
         <div className="rounded-xl border border-white/10 bg-white/[0.02] overflow-hidden" style={{ height: '70vh' }}>
-          <FsmViewer protocol={protocol} />
+          <FsmViewer protocol={protocol} highlightedStateId={highlightedStateId} />
         </div>
       )}
 
@@ -214,6 +219,10 @@ export function ProtocolDetailPage() {
           selectedRunId={selectedRunId}
           onSelectRun={setSelectedRunId}
           onRefresh={fetchRuns}
+          onNavigateToFsmState={(stateId) => {
+            setHighlightedStateId(stateId)
+            setActiveTab('fsm')
+          }}
         />
       )}
 
@@ -256,9 +265,13 @@ interface RunsTabProps {
   selectedRunId: string | null
   onSelectRun: (id: string | null) => void
   onRefresh: () => void
+  /** Navigate to FSM tab and highlight a specific state */
+  onNavigateToFsmState?: (stateId: string) => void
 }
 
-function RunsTab({ runs, loading, error, selectedRunId, onSelectRun, onRefresh }: RunsTabProps) {
+function RunsTab({ runs, loading, error, selectedRunId, onSelectRun, onRefresh, onNavigateToFsmState }: RunsTabProps) {
+  const feedbackViz = useFeedbackVizData(selectedRunId ?? undefined)
+
   if (error) {
     return <ErrorState title="Failed to load runs" description={error} onRetry={onRefresh} />
   }
@@ -324,17 +337,33 @@ function RunsTab({ runs, loading, error, selectedRunId, onSelectRun, onRefresh }
 
       {/* Side panel: Run tree */}
       {selectedRunId && (
-        <div className="w-1/2 border border-white/[0.06] rounded-xl bg-white/[0.02] p-3 relative">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-semibold text-gray-200">Run Tree</h3>
-            <button
-              onClick={() => onSelectRun(null)}
-              className="p-1 rounded hover:bg-white/[0.06] text-gray-400 hover:text-gray-200 transition-colors"
-            >
-              <X className="w-4 h-4" />
-            </button>
+        <div className="w-1/2 space-y-4">
+          <div className="border border-white/[0.06] rounded-xl bg-white/[0.02] p-3 relative">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-semibold text-gray-200">Run Tree</h3>
+              <button
+                onClick={() => onSelectRun(null)}
+                className="p-1 rounded hover:bg-white/[0.06] text-gray-400 hover:text-gray-200 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <RunTreeView rootRunId={selectedRunId} />
           </div>
-          <RunTreeView rootRunId={selectedRunId} />
+          {feedbackViz.data && (
+            <ProtocolRunWidget
+              data={feedbackViz.data}
+              height={200}
+              className="rounded-lg"
+              interactive
+              onMarkerClick={(info) => {
+                const stateId = info.metadata?.state_id as string | undefined
+                if (stateId && onNavigateToFsmState) {
+                  onNavigateToFsmState(stateId)
+                }
+              }}
+            />
+          )}
         </div>
       )}
     </div>

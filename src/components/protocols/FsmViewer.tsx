@@ -38,6 +38,8 @@ interface FsmViewerProps {
   /** Initial protocol to render */
   protocol: Protocol
   className?: string
+  /** State ID to highlight (from external navigation, e.g. spiral marker click) */
+  highlightedStateId?: string | null
 }
 
 // ---------------------------------------------------------------------------
@@ -110,11 +112,12 @@ interface FsmStateNodeData {
   isMacro: boolean
   subProtocolId?: string | null
   description?: string
+  isHighlighted?: boolean
   [key: string]: unknown
 }
 
 function FsmStateNode({ data }: { data: FsmStateNodeData }) {
-  const { label, isInitial, isTerminal, isMacro, description } = data
+  const { label, isInitial, isTerminal, isMacro, isHighlighted, description } = data
 
   // Visual configuration based on state type
   let bgClass = 'bg-white/[0.06]'
@@ -135,6 +138,13 @@ function FsmStateNode({ data }: { data: FsmStateNodeData }) {
     bgClass = 'bg-green-500/10'
     borderClass = 'border-green-400/40'
     icon = <Square className="w-3 h-3 text-green-400" />
+  }
+
+  // Highlight override from external navigation (spiral marker click) — takes priority
+  if (isHighlighted) {
+    bgClass = 'bg-cyan-500/20'
+    borderClass = 'border-cyan-400/60'
+    borderStyle = 'border-2'
   }
 
   return (
@@ -172,7 +182,7 @@ const nodeTypes: NodeTypes = {
 // Component
 // ---------------------------------------------------------------------------
 
-export function FsmViewer({ protocol: initialProtocol, className = '' }: FsmViewerProps) {
+export function FsmViewer({ protocol: initialProtocol, className = '', highlightedStateId }: FsmViewerProps) {
   const [protocolStack, setProtocolStack] = useState<Protocol[]>([initialProtocol])
   const [breadcrumbs, setBreadcrumbs] = useState<FsmHierarchyCrumb[]>([
     { protocolId: initialProtocol.id, protocolName: initialProtocol.name },
@@ -201,6 +211,30 @@ export function FsmViewer({ protocol: initialProtocol, className = '' }: FsmView
     setNodes(layoutNodes)
     setEdges(layoutEdges)
   }, [layoutNodes, layoutEdges, setNodes, setEdges])
+
+  // Apply highlight when highlightedStateId changes
+  useEffect(() => {
+    if (highlightedStateId == null) return
+    setNodes((prev) =>
+      prev.map((node) => ({
+        ...node,
+        data: {
+          ...node.data,
+          isHighlighted: node.id === highlightedStateId,
+        },
+      })),
+    )
+    // Auto-clear highlight after 3 seconds
+    const timer = setTimeout(() => {
+      setNodes((prev) =>
+        prev.map((node) => ({
+          ...node,
+          data: { ...node.data, isHighlighted: false },
+        })),
+      )
+    }, 3000)
+    return () => clearTimeout(timer)
+  }, [highlightedStateId, setNodes])
 
   // Handle node click — drill down into macro-states
   const onNodeClick = useCallback(
