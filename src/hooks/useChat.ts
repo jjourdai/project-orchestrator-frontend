@@ -465,6 +465,12 @@ function historyEventsToMessages(events: any[]): ChatMessage[] {
         break
       }
 
+      case 'system_hint': {
+        // System-generated hints are internal — never rendered in the UI.
+        lastEventWasMaxTurns = false
+        break
+      }
+
       default:
         // Unknown event type — skip
         lastEventWasMaxTurns = false
@@ -1224,6 +1230,15 @@ export function useChat() {
           }
           break
         }
+
+        case 'system_hint': {
+          // System-generated hints are internal — never rendered in the UI.
+          break
+        }
+
+        default:
+          // Unknown event type — ignore gracefully
+          break
       }
 
       return updated

@@ -282,6 +282,10 @@ export function ChatMessageBubble({ message, isStreaming, onRespondPermission, o
                 />
               )
 
+            case 'system_hint':
+              // System hints are internal — never rendered in the UI.
+              return null
+
             case 'result_max_turns': {
               // Hide the entire block if the user already continued past this point
               // (a continue_indicator follows in the same message), or if it was
