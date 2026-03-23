@@ -128,7 +128,7 @@ export const visibleEdgesAtom = atom<IntelligenceEdge[]>((get) => {
   const coChangeThreshold = get(coChangeThresholdAtom)
 
   return edges.filter((e) => {
-    const edgeData = e.data as { layer?: IntelligenceLayer; relationType?: string; count?: number } | undefined
+    const edgeData = e.data as { layer?: IntelligenceLayer; relationType?: string; count?: number; score?: number } | undefined
     const layer = edgeData?.layer
     const layerVisible = layer ? layers.has(layer) : true
     // Both source and target must be visible
@@ -194,7 +194,7 @@ export const touchesHeatmapAtom = atom<boolean>(false)
 export const coChangeThresholdAtom = atom<number>(1)
 
 /** Community hulls toggle — show/hide convex hull overlays in 3D view */
-export const showCommunityHullsAtom = atom<boolean>(false)
+export const showCommunityHullsAtom = atom<boolean>(true)
 
 /** Graph brightness (0→1) — controls ambient light intensity + background luminance */
 export const graphBrightnessAtom = atom<number>(0.5)
