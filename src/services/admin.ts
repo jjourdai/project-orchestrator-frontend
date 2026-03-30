@@ -25,7 +25,8 @@ export const adminApi = {
   startWatch: (data: { path: string; project_id?: string }) =>
     api.post<WatchStatus>('/watch', data),
 
-  stopWatch: () => api.delete<WatchStatus>('/watch'),
+  stopWatch: (projectId?: string) =>
+    api.delete<WatchStatus>(projectId ? `/watch?project_id=${projectId}` : '/watch'),
 
   // ── Embedding Backfill ────────────────────────────────────────────────
 
