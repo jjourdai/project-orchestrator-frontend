@@ -38,7 +38,7 @@ export function WatcherToggle({
       const status: WatchStatus = await adminApi.getWatchStatus()
       // Check if this project's root_path is in the watched list
       const isWatched = status.watched_paths.some(
-        (p) => p === rootPath || rootPath.startsWith(p) || p.startsWith(rootPath),
+        (p) => p === rootPath || rootPath.startsWith(p + '/') || p.startsWith(rootPath + '/'),
       )
       setWatching(isWatched)
     } catch {
