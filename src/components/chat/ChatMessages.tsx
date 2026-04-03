@@ -4,7 +4,7 @@ import { chatScrollToTurnAtom } from '@/atoms'
 import type { ChatMessage, Project } from '@/types'
 import { ChatMessageBubble } from './ChatMessageBubble'
 import { ChatWelcome } from './ChatWelcome'
-import { Loader2 } from 'lucide-react'
+import { Loader2, AlertTriangle } from 'lucide-react'
 
 /** Pixel threshold from top to trigger loading older messages */
 const SCROLL_TOP_THRESHOLD = 80
@@ -35,6 +35,8 @@ interface ChatMessagesProps {
   onSelectSession?: (sessionId: string, turnIndex?: number, title?: string) => void
   /** Currently selected project (for welcome screen context) */
   selectedProject?: Project | null
+  /** Error message when session history failed to load */
+  sessionLoadError?: string | null
 }
 
 export const ChatMessages = memo(function ChatMessages({
@@ -56,6 +58,7 @@ export const ChatMessages = memo(function ChatMessages({
   onQuickAction,
   onSelectSession,
   selectedProject,
+  sessionLoadError,
 }: ChatMessagesProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const shouldAutoScrollRef = useRef(true)
@@ -303,6 +306,13 @@ export const ChatMessages = memo(function ChatMessages({
 
   return (
     <div className="flex-1 relative overflow-hidden">
+      {/* Error banner when session history failed to load via REST */}
+      {sessionLoadError && (
+        <div className="absolute top-0 left-0 right-0 z-10 flex items-center gap-2 px-4 py-2 bg-amber-500/10 border-b border-amber-500/20 text-amber-400 text-xs">
+          <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+          <span>{sessionLoadError}</span>
+        </div>
+      )}
       <div
         ref={scrollRef}
         onScroll={handleScroll}

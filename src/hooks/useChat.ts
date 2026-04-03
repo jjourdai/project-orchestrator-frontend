@@ -40,6 +40,7 @@ export function useChat() {
   const wsRef = useRef<ChatWebSocket | null>(null)
   const [isSending, setIsSending] = useState(false)
   const [sessionMeta, setSessionMeta] = useState<SessionMeta | null>(null)
+  const [sessionLoadError, setSessionLoadError] = useState<string | null>(null)
 
   // Flag to distinguish first-message session creation from loadSession().
   // When true, the auto-connect useEffect will skip resetting messages
@@ -71,6 +72,10 @@ export function useChat() {
   // then back to true after setMessages(history) + replaying buffered events.
   const historyLoadedRef = useRef(true)
   const pendingEventsRef = useRef<Array<ChatEvent & { seq?: number; replaying?: boolean }>>([])
+
+  // Safety timeout after interrupt: if no streaming_status/result arrives within
+  // this delay, force isStreaming=false to unblock the UI.
+  const interruptTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Lazily create the ChatWebSocket singleton per hook instance
   const getWs = useCallback(() => {
@@ -191,6 +196,11 @@ export function useChat() {
     if (event.type === 'streaming_status') {
       const val = !!(event as { is_streaming?: boolean }).is_streaming
       setIsStreaming(val)
+      // Clear interrupt safety timeout — we got the confirmation we were waiting for
+      if (!val && interruptTimeoutRef.current) {
+        clearTimeout(interruptTimeoutRef.current)
+        interruptTimeoutRef.current = null
+      }
       return
     }
 
@@ -749,6 +759,11 @@ export function useChat() {
           if (!event.replaying) {
             setIsStreaming(false)
             setIsCompacting(false) // safety net: reset compaction flag on result
+            // Clear interrupt safety timeout — result event confirms stream ended
+            if (interruptTimeoutRef.current) {
+              clearTimeout(interruptTimeoutRef.current)
+              interruptTimeoutRef.current = null
+            }
             // Auto-continue is now handled by the backend — no local setTimeout needed
           }
           break
@@ -790,6 +805,7 @@ export function useChat() {
       onReplayComplete: () => {
         setIsReplaying(false)
         setIsLoadingHistory(false)
+        setSessionLoadError(null) // Clear error banner after successful WS replay fallback
       },
     })
   }, [getWs, handleEvent, setWsStatus, setIsReplaying, setIsStreaming, setIsCompacting])
@@ -798,6 +814,10 @@ export function useChat() {
   useEffect(() => {
     return () => {
       wsRef.current?.disconnect()
+      if (interruptTimeoutRef.current) {
+        clearTimeout(interruptTimeoutRef.current)
+        interruptTimeoutRef.current = null
+      }
     }
   }, [])
 
@@ -827,7 +847,11 @@ export function useChat() {
 
     setIsLoadingHistory(true)
     setIsReplaying(true)
-    setMessages([])
+    setSessionLoadError(null)
+    // NOTE: Do NOT setMessages([]) here — keep previous messages visible (with
+    // loading overlay) until the REST response arrives and we can atomic-swap.
+    // This eliminates the "empty chat" flash when switching sessions or when
+    // REST fails and we fall back to WS replay.
     paginationRef.current = { offset: 0, tailOffset: 0, totalCount: 0 }
     setHasOlderMessages(false)
 
@@ -857,6 +881,8 @@ export function useChat() {
         if (cancelled) return
         const total = meta.total_count
         if (total === 0) {
+          // Empty session — atomic swap to empty (clears stale messages from previous session)
+          setMessages([])
           paginationRef.current = { offset: 0, tailOffset: 0, totalCount: 0 }
           setHasOlderMessages(false)
           setHasNewerMessages(false)
@@ -956,8 +982,9 @@ export function useChat() {
       })
       .catch(() => {
         if (cancelled) return
-        // Fallback: if REST fails, switch to full WS replay.
-        // Stop buffering, clear pending, reconnect with seq 0.
+        // Fallback: if REST fails, attempt full WS replay.
+        // Previous messages remain visible while replay loads.
+        setSessionLoadError('Failed to load session history — retrying via live connection…')
         historyLoadedRef.current = true
         pendingEventsRef.current = []
         setIsLoadingHistory(false)
@@ -1295,12 +1322,25 @@ export function useChat() {
     if (!sessionId) return
     const ws = getWs()
     ws.sendInterrupt()
-    // Don't set isStreaming=false here — wait for the 'result' event
-  }, [sessionId, getWs])
+    // Don't set isStreaming=false here — wait for the 'result' event.
+    // But start a safety timeout: if no streaming_status or result event
+    // arrives within 5 seconds, force-unblock the UI to prevent it from
+    // being stuck in "streaming" state forever (e.g. network glitch).
+    if (interruptTimeoutRef.current) clearTimeout(interruptTimeoutRef.current)
+    interruptTimeoutRef.current = setTimeout(() => {
+      interruptTimeoutRef.current = null
+      setIsStreaming(false)
+    }, 5_000)
+  }, [sessionId, getWs, setIsStreaming])
 
   const newSession = useCallback(() => {
     const ws = getWs()
     ws.disconnect()
+    // Clear any pending interrupt timeout
+    if (interruptTimeoutRef.current) {
+      clearTimeout(interruptTimeoutRef.current)
+      interruptTimeoutRef.current = null
+    }
     setSessionId(null)
     setIsStreaming(false)
     setIsReplaying(false)
@@ -1341,6 +1381,12 @@ export function useChat() {
     // Guard: if already on this session, do nothing (avoid WS disconnect/reconnect loop)
     if (sid === sessionId) return
 
+    // Clear any pending interrupt timeout from the previous session
+    if (interruptTimeoutRef.current) {
+      clearTimeout(interruptTimeoutRef.current)
+      interruptTimeoutRef.current = null
+    }
+
     // Store target timestamp (Unix seconds) for the auto-connect useEffect to pick up
     targetTimestampRef.current = targetTimestamp ?? null
 
@@ -1348,7 +1394,8 @@ export function useChat() {
     ws.disconnect()
     setSessionId(sid)
     setIsStreaming(false)
-    setMessages([])
+    // NOTE: Do NOT setMessages([]) here — let the useEffect swap atomically
+    // after REST data arrives. This prevents the "flash of empty chat" race condition.
     setIsLoadingHistory(true)
     setIsReplaying(true)
     setHasOlderMessages(false)
@@ -1389,6 +1436,7 @@ export function useChat() {
     wsStatus,
     sessionId,
     sessionMeta,
+    sessionLoadError,
     sendMessage,
     sendContinue,
     respondPermission,
