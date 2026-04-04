@@ -17,6 +17,7 @@ import {
   ConfirmDialog,
   MilestoneStatusBadge,
   MetricTooltip,
+  WatcherToggle,
 } from '@/components/ui'
 import {
   Network,
@@ -687,6 +688,13 @@ export function WorkspaceDetailPage() {
                     <span className="text-xs text-gray-500 hidden sm:inline">
                       {project.slug}
                     </span>
+                    {project.root_path && (
+                      <WatcherToggle
+                        projectId={project.id}
+                        rootPath={project.root_path}
+                        compact
+                      />
+                    )}
                     <button
                       onClick={(e) => {
                         e.preventDefault()

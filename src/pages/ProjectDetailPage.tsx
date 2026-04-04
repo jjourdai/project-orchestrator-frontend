@@ -29,6 +29,7 @@ import {
   Badge,
   PageHeader,
   ProgressBar,
+  WatcherToggle,
 } from '@/components/ui'
 import { MetricTooltip } from '@/components/ui/MetricTooltip'
 import { ExpandableMilestoneRow } from '@/components/expandable'
@@ -308,6 +309,13 @@ export function ProjectDetailPage() {
           >
             <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
           </button>
+          {project.root_path && (
+            <WatcherToggle
+              projectId={project.id}
+              rootPath={project.root_path}
+              compact
+            />
+          )}
         </div>
       </PageHeader>
 
