@@ -26,6 +26,8 @@ import {
   CheckCircle2,
   Circle,
   ArrowRight,
+  Copy,
+  Check,
 } from 'lucide-react'
 import {
   Card,
@@ -247,6 +249,7 @@ export function RfcDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [transitioning, setTransitioning] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
 
   const sections = rfc ? buildSections(rfc) : []
   const activeSection = useSectionObserver(sections.map((s) => s.id))
@@ -292,6 +295,41 @@ export function RfcDetailPage() {
 
   const goBack = () => viewNav(workspacePath(wsSlug, '/rfcs'), { type: 'back-button' })
 
+  const handleCopyMarkdown = useCallback(async () => {
+    if (!rfc) return
+    const lines: string[] = []
+    lines.push(`# ${rfc.title}`)
+    lines.push('')
+    lines.push(`**Status:** ${rfc.current_state ?? rfc.status}`)
+    lines.push(`**Importance:** ${rfc.importance}`)
+    lines.push(`**Created:** ${formatDate(rfc.created_at)}`)
+    if (rfc.updated_at) lines.push(`**Updated:** ${formatDate(rfc.updated_at)}`)
+    if (rfc.tags.length > 0) {
+      lines.push(`**Tags:** ${rfc.tags.filter((t) => !t.startsWith('rfc-')).join(', ')}`)
+    }
+    lines.push('')
+    lines.push('---')
+    lines.push('')
+    for (const section of rfc.sections) {
+      if (rfc.sections.length === 1 && section.title === 'Content') {
+        lines.push(section.content)
+      } else {
+        lines.push(`## ${section.title}`)
+        lines.push('')
+        lines.push(section.content)
+      }
+      lines.push('')
+    }
+    try {
+      await navigator.clipboard.writeText(lines.join('\n'))
+      setCopied(true)
+      toast.success('RFC copied as Markdown')
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      toast.error('Failed to copy to clipboard')
+    }
+  }, [rfc, toast])
+
   // Loading / Error states
   if (loading) return <LoadingPage />
   if (error || !rfc) {
@@ -323,13 +361,23 @@ export function RfcDetailPage() {
           ...(rfc.updated_at ? [{ label: 'Updated', value: relativeTime(rfc.updated_at) }] : []),
         ]}
         actions={
-          <button
-            onClick={goBack}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-gray-400 hover:text-gray-200 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] transition-colors"
-          >
-            <ArrowRight className="w-3.5 h-3.5 rotate-180" />
-            Back to RFCs
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleCopyMarkdown}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-gray-400 hover:text-gray-200 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] transition-colors"
+              title="Copy RFC as Markdown"
+            >
+              {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+              {copied ? 'Copied!' : 'Copy MD'}
+            </button>
+            <button
+              onClick={goBack}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-gray-400 hover:text-gray-200 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] transition-colors"
+            >
+              <ArrowRight className="w-3.5 h-3.5 rotate-180" />
+              Back to RFCs
+            </button>
+          </div>
         }
       >
         <Badge variant={imp.variant}>

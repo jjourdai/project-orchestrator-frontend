@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { Outlet, NavLink, useLocation, useParams } from 'react-router-dom'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { Menu, Home, Flag, Box, ClipboardList, FileText, Scale, Code, Brain, Users, Workflow, ChevronLeft, ChevronRight, MessageCircle, Settings, Activity, ScrollText, Plug } from 'lucide-react'
+import { Menu, Home, Flag, Box, ClipboardList, FileText, Scale, Code, Brain, Users, Workflow, ChevronLeft, ChevronRight, MessageCircle, Settings, Activity, ScrollText, Plug, Network } from 'lucide-react'
 import { sidebarCollapsedAtom, chatPanelModeAtom, chatPanelWidthAtom, eventBusStatusAtom, workspacesAtom, activeWorkspaceAtom, workspaceRefreshAtom } from '@/atoms'
 import { ToastContainer, Branding } from '@/components/ui'
 import { ChatPanel } from '@/components/chat'
@@ -12,6 +12,7 @@ import type { NavDirection } from '@/hooks'
 import { isTauri } from '@/services/env'
 import { workspacesApi } from '@/services/workspaces'
 import { workspacePath } from '@/utils/paths'
+import { FederationPanel } from '@/components/mcpFederation/FederationPanel'
 import type { Project } from '@/types'
 
 function SidebarContent({ collapsed, trafficLightPad, wsSlug, onNavClick }: { collapsed: boolean; trafficLightPad?: boolean; wsSlug: string; onNavClick?: (href: string, direction: NavDirection) => void }) {
@@ -169,6 +170,7 @@ export function MainLayout() {
   const [chatMode, setChatMode] = useAtom(chatPanelModeAtom)
   const [chatWidth] = useAtom(chatPanelWidthAtom)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [federationPanelOpen, setFederationPanelOpen] = useState(false)
   const location = useLocation()
   const isSmUp = useMediaQuery('(min-width: 640px)')
   const chatOpen = chatMode === 'open'
@@ -315,8 +317,18 @@ export function MainLayout() {
 
           <Breadcrumb pathname={location.pathname} workspaceName={activeWorkspace?.name} />
 
-          {/* Chat toggle (only icon in header right) */}
-          <div className="ml-auto flex items-center">
+          {/* Header right icons */}
+          <div className="ml-auto flex items-center gap-1">
+            {/* Federation panel toggle */}
+            <button
+              onClick={() => setFederationPanelOpen(!federationPanelOpen)}
+              className={`p-2 rounded-lg transition-colors ${federationPanelOpen ? 'text-indigo-400 bg-indigo-500/10' : 'text-gray-400 hover:text-gray-200 hover:bg-white/[0.06]'}`}
+              title="MCP Federation"
+            >
+              <Network className="w-5 h-5" />
+            </button>
+
+            {/* Chat toggle */}
             <button
               onClick={() => setChatMode(chatMode === 'closed' ? 'open' : 'closed')}
               className={`p-2 rounded-lg transition-colors ${chatMode !== 'closed' ? 'text-indigo-400 bg-indigo-500/10' : 'text-gray-400 hover:text-gray-200 hover:bg-white/[0.06]'}`}
@@ -342,6 +354,7 @@ export function MainLayout() {
       </main>
 
       <ChatPanel />
+      <FederationPanel open={federationPanelOpen} onClose={() => setFederationPanelOpen(false)} />
       <ToastContainer />
     </div>
   )

@@ -31,6 +31,8 @@ import {
 } from '@/components/ui'
 import { useToast, useConfirmDialog } from '@/hooks'
 import { mcpFederationApi } from '@/services/mcpFederation'
+import { CascadeFlowView } from '@/components/mcpFederation'
+import { useParams } from 'react-router-dom'
 import type {
   McpServerSummary,
   McpDiscoveredTool,
@@ -465,6 +467,7 @@ function ServerDetailPanel({ server, onClose }: { server: McpServerSummary; onCl
 export function McpFederationPage() {
   const toast = useToast()
   const confirmDialog = useConfirmDialog()
+  const { slug: wsSlug, projectSlug } = useParams<{ slug: string; projectSlug?: string }>()
   const [servers, setServers] = useState<McpServerSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -746,6 +749,19 @@ export function McpFederationPage() {
             onClose={() => setSelectedServerId(null)}
           />
         )}
+
+        {/* ── Cascade View (3-tier scoping) ── */}
+        <CollapsibleSection
+          title="Cascade View"
+          icon={<Activity className="w-4 h-4" />}
+          description="3-tier MCP scoping: Global → Workspace → Project"
+          defaultOpen={false}
+        >
+          <CascadeFlowView
+            workspaceSlug={wsSlug}
+            projectSlug={projectSlug}
+          />
+        </CollapsibleSection>
       </div>
 
       {/* ── Dialogs ── */}

@@ -78,6 +78,55 @@ export interface ServerToolsResponse {
   tools: McpDiscoveredTool[]
 }
 
+// ── Assignment types (3-tier scoping) ───────────────────────────────────
+
+export type McpScopeType = 'global' | 'workspace' | 'project'
+
+export type McpAssignmentState = 'enabled' | 'excluded'
+
+/** An MCP server assignment to a scope (global, workspace, or project). */
+export interface McpAssignment {
+  id: string
+  server_id: string
+  scope_type: McpScopeType
+  scope_id: string | null
+  state: McpAssignmentState
+  config_overrides: string | null
+  created_at: string
+  updated_at: string | null
+}
+
+/** One step in the resolution chain explaining why an MCP is in a given state. */
+export interface ResolutionStep {
+  level: McpScopeType
+  /** State at this level: "enabled", "excluded", or "inherited" (no explicit assignment). */
+  state: string
+  scope_id: string | null
+}
+
+/** A resolved effective MCP for a given scope, after cascade resolution. */
+export interface EffectiveMcp {
+  server_id: string
+  display_name: string
+  /** Final resolved state: "enabled" or "excluded". */
+  state: McpAssignmentState
+  resolved_by: McpAssignment
+  resolution_chain: ResolutionStep[]
+}
+
+export interface CreateAssignmentRequest {
+  scope_type: McpScopeType
+  scope_id?: string
+  state: McpAssignmentState
+  config_overrides?: Record<string, unknown>
+}
+
+export interface MigrateResponse {
+  success: boolean
+  migrated: number
+  message: string
+}
+
 // ── API ──────────────────────────────────────────────────────────────────
 
 export const mcpFederationApi = {
@@ -108,4 +157,39 @@ export const mcpFederationApi = {
   /** Reconnect a disconnected/errored server */
   reconnectServer: (serverId: string) =>
     api.post<ActionResponse>(`/mcp-federation/servers/${serverId}/reconnect`),
+
+  // ── Assignment scoping (3-tier) ─────────────────────────────────────
+
+  /** List all assignments for a specific server */
+  getAssignments: (serverId: string) =>
+    api.get<McpAssignment[]>(`/mcp-federation/servers/${serverId}/assignments`),
+
+  /** Create an assignment (scope a server to global/workspace/project) */
+  createAssignment: (serverId: string, body: CreateAssignmentRequest) =>
+    api.post<McpAssignment>(`/mcp-federation/servers/${serverId}/assignments`, body),
+
+  /** Delete an assignment */
+  deleteAssignment: (assignmentId: string) =>
+    api.delete<ActionResponse>(`/mcp-federation/assignments/${assignmentId}`),
+
+  /** Resolve effective MCPs for a given scope */
+  resolveEffectiveMcps: (params: { workspace_id?: string; project_id?: string }) => {
+    const qs = new URLSearchParams()
+    if (params.workspace_id) qs.set('workspace_id', params.workspace_id)
+    if (params.project_id) qs.set('project_id', params.project_id)
+    const query = qs.toString()
+    return api.get<EffectiveMcp[]>(`/mcp-federation/resolve${query ? `?${query}` : ''}`)
+  },
+
+  /** Convenience: resolve effective MCPs for a workspace */
+  getWorkspaceEffectiveMcps: (slug: string) =>
+    api.get<EffectiveMcp[]>(`/workspaces/${slug}/effective-mcps`),
+
+  /** Convenience: resolve effective MCPs for a project */
+  getProjectEffectiveMcps: (slug: string) =>
+    api.get<EffectiveMcp[]>(`/projects/${slug}/effective-mcps`),
+
+  /** Run migration: auto-assign existing servers as global+enabled */
+  migrateAssignments: () =>
+    api.post<MigrateResponse>('/mcp-federation/migrate-assignments'),
 }
