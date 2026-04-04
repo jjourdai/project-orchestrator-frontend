@@ -361,23 +361,13 @@ export function RfcDetailPage() {
           ...(rfc.updated_at ? [{ label: 'Updated', value: relativeTime(rfc.updated_at) }] : []),
         ]}
         actions={
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleCopyMarkdown}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-gray-400 hover:text-gray-200 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] transition-colors"
-              title="Copy RFC as Markdown"
-            >
-              {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-              {copied ? 'Copied!' : 'Copy MD'}
-            </button>
-            <button
-              onClick={goBack}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-gray-400 hover:text-gray-200 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] transition-colors"
-            >
-              <ArrowRight className="w-3.5 h-3.5 rotate-180" />
-              Back to RFCs
-            </button>
-          </div>
+          <button
+            onClick={goBack}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-gray-400 hover:text-gray-200 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] transition-colors"
+          >
+            <ArrowRight className="w-3.5 h-3.5 rotate-180" />
+            Back to RFCs
+          </button>
         }
       >
         <Badge variant={imp.variant}>
@@ -467,11 +457,18 @@ export function RfcDetailPage() {
       <section id="content" className="scroll-mt-20 space-y-4">
         {isSingleContent ? (
           <Card>
-            <CardHeader>
+            <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle>
                 <FileText className="w-4 h-4 mr-1.5 inline" />
                 Content
               </CardTitle>
+              <button
+                onClick={handleCopyMarkdown}
+                className="p-1.5 rounded-md text-gray-500 hover:text-gray-200 hover:bg-white/[0.08] transition-colors"
+                title="Copy RFC as Markdown"
+              >
+                {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+              </button>
             </CardHeader>
             <CardContent>
               <CollapsibleMarkdown content={rfc.sections[0].content} maxHeight={600} />
@@ -480,11 +477,20 @@ export function RfcDetailPage() {
         ) : (
           rfc.sections.map((section, idx) => (
             <Card key={idx}>
-              <CardHeader>
+              <CardHeader className={idx === 0 ? 'flex flex-row items-center justify-between' : undefined}>
                 <CardTitle>
                   <BookOpen className="w-4 h-4 mr-1.5 inline text-gray-500" />
                   {section.title}
                 </CardTitle>
+                {idx === 0 && (
+                  <button
+                    onClick={handleCopyMarkdown}
+                    className="p-1.5 rounded-md text-gray-500 hover:text-gray-200 hover:bg-white/[0.08] transition-colors"
+                    title="Copy RFC as Markdown"
+                  >
+                    {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                  </button>
+                )}
               </CardHeader>
               <CardContent>
                 <CollapsibleMarkdown content={section.content} maxHeight={400} />
