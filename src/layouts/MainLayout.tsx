@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { Outlet, NavLink, useLocation, useParams } from 'react-router-dom'
+import { Outlet, NavLink, useLocation, useParams, useNavigate } from 'react-router-dom'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { Menu, Home, Flag, Box, ClipboardList, FileText, Scale, Code, Brain, Users, Workflow, ChevronLeft, ChevronRight, MessageCircle, Settings, Activity, ScrollText, Plug, Network } from 'lucide-react'
+import { Menu, Home, Flag, Box, ClipboardList, FileText, Scale, Code, Brain, Users, Workflow, ChevronLeft, ChevronRight, MessageCircle, Settings, Activity, ScrollText, Network } from 'lucide-react'
 import { sidebarCollapsedAtom, chatPanelModeAtom, chatPanelWidthAtom, eventBusStatusAtom, workspacesAtom, activeWorkspaceAtom, workspaceRefreshAtom } from '@/atoms'
 import { ToastContainer, Branding } from '@/components/ui'
 import { ChatPanel } from '@/components/chat'
@@ -59,13 +59,6 @@ function SidebarContent({ collapsed, trafficLightPad, wsSlug, onNavClick }: { co
         { name: 'Skills', href: workspacePath(wsSlug, '/skills'), icon: Brain },
         { name: 'Personas', href: workspacePath(wsSlug, '/personas'), icon: Users },
         { name: 'Protocols', href: workspacePath(wsSlug, '/protocols'), icon: Workflow },
-      ],
-    },
-    {
-      label: 'System',
-      items: [
-        { name: 'MCP Federation', href: workspacePath(wsSlug, '/mcp-federation'), icon: Plug },
-        { name: 'Admin', href: workspacePath(wsSlug, '/admin'), icon: Settings },
       ],
     },
   ], [wsSlug])
@@ -172,6 +165,7 @@ export function MainLayout() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [federationPanelOpen, setFederationPanelOpen] = useState(false)
   const location = useLocation()
+  const navigate = useNavigate()
   const isSmUp = useMediaQuery('(min-width: 640px)')
   const chatOpen = chatMode === 'open'
   const chatFullscreen = chatMode === 'fullscreen'
@@ -326,6 +320,15 @@ export function MainLayout() {
               title="MCP Federation"
             >
               <Network className="w-5 h-5" />
+            </button>
+
+            {/* Admin link */}
+            <button
+              onClick={() => navigate('/admin')}
+              className={`p-2 rounded-lg transition-colors ${location.pathname.startsWith('/admin') ? 'text-indigo-400 bg-indigo-500/10' : 'text-gray-400 hover:text-gray-200 hover:bg-white/[0.06]'}`}
+              title="Administration"
+            >
+              <Settings className="w-5 h-5" />
             </button>
 
             {/* Chat toggle */}

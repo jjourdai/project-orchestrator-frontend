@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom'
 import { Provider, useAtomValue } from 'jotai'
-import { MainLayout } from '@/layouts'
+import { MainLayout, GlobalLayout } from '@/layouts'
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute'
 import { SetupGuard } from '@/components/SetupGuard'
 import { WorkspaceRouteGuard } from '@/components/WorkspaceRouteGuard'
@@ -195,12 +195,20 @@ function App() {
                         <Route path="pipelines" element={<PipelineDashboardPage />} />
                         <Route path="triggers" element={<TriggerDashboardPage />} />
                         <Route path="sharing" element={<SharingPage />} />
-                        <Route path="neural-routing" element={<NeuralRoutingPage />} />
-                        <Route path="mcp-federation" element={<McpFederationPage />} />
                         <Route path="particles" element={<ParticlesShowcasePage />} />
-                        <Route path="admin" element={<AdminPage />} />
+                        {/* Legacy redirects for pages moved to global scope */}
+                        <Route path="admin" element={<Navigate to="/admin" replace />} />
+                        <Route path="mcp-federation" element={<Navigate to="/mcp-federation" replace />} />
+                        <Route path="neural-routing" element={<Navigate to="/neural-routing" replace />} />
                         <Route path="*" element={<NotFoundPage embedded />} />
                       </Route>
+                    </Route>
+
+                    {/* ===== Global routes (no workspace scope) ===== */}
+                    <Route element={<GlobalLayout />}>
+                      <Route path="/admin" element={<AdminPage />} />
+                      <Route path="/mcp-federation" element={<McpFederationPage />} />
+                      <Route path="/neural-routing" element={<NeuralRoutingPage />} />
                     </Route>
 
                     {/* ===== Legacy redirects (bookmarks, old URLs) ===== */}

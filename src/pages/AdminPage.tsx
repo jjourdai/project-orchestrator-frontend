@@ -27,8 +27,9 @@ import {
   PageShell,
   CollapsibleSection,
 } from '@/components/ui'
-import { adminApi, workspacesApi } from '@/services'
-import { useConfirmDialog, useToast, useWorkspaceSlug } from '@/hooks'
+import { adminApi } from '@/services'
+import { projectsApi } from '@/services/projects'
+import { useConfirmDialog, useToast } from '@/hooks'
 import type {
   BackfillJobStatus,
   MeilisearchStats,
@@ -290,23 +291,20 @@ function StatusBadge({ status }: { status: string }) {
 // ============================================================================
 
 export function AdminPage() {
-  const wsSlug = useWorkspaceSlug()
-
-  // Projects for scoping
+  // Projects for scoping — loads ALL projects globally (not workspace-scoped)
   const [projects, setProjects] = useState<{ id: string; name: string; slug: string }[]>([])
   const [selectedProject, setSelectedProject] = useState('')
 
   useEffect(() => {
-    if (!wsSlug) return
-    workspacesApi
-      .listProjects(wsSlug)
+    projectsApi
+      .list({ limit: 200, sort_by: 'name', sort_order: 'asc' })
       .then((data) => {
-        const mapped = data.map((p) => ({ id: p.id, name: p.name, slug: p.slug }))
+        const mapped = (data.items || []).map((p) => ({ id: p.id, name: p.name, slug: p.slug }))
         setProjects(mapped)
         if (mapped.length > 0) setSelectedProject(mapped[0].id)
       })
       .catch(() => {})
-  }, [wsSlug])
+  }, [])
 
   const projectOptions = projects.map((p) => ({ value: p.id, label: p.name }))
   const selectedProjectSlug = projects.find((p) => p.id === selectedProject)?.slug || ''

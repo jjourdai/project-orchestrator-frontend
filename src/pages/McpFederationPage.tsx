@@ -32,7 +32,7 @@ import {
 import { useToast, useConfirmDialog } from '@/hooks'
 import { mcpFederationApi } from '@/services/mcpFederation'
 import { CascadeFlowView } from '@/components/mcpFederation'
-import { useParams } from 'react-router-dom'
+// Global page — no workspace route params needed
 import type {
   McpServerSummary,
   McpDiscoveredTool,
@@ -467,7 +467,9 @@ function ServerDetailPanel({ server, onClose }: { server: McpServerSummary; onCl
 export function McpFederationPage() {
   const toast = useToast()
   const confirmDialog = useConfirmDialog()
-  const { slug: wsSlug, projectSlug } = useParams<{ slug: string; projectSlug?: string }>()
+  // Federation is global — no workspace/project scope needed for core operations
+  const wsSlug: string | undefined = undefined
+  const projectSlug: string | undefined = undefined
   const [servers, setServers] = useState<McpServerSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
