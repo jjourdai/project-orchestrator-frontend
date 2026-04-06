@@ -2,7 +2,7 @@ import { useAtom } from 'jotai'
 import { chatPanelModeAtom, chatPanelWidthAtom, chatScrollToTurnAtom, chatPermissionConfigAtom, chatSelectedProjectAtom, chatAllProjectsModeAtom, chatWorkspaceHasProjectsAtom, activeWorkspaceSlugAtom } from '@/atoms'
 import { useChat, useDetachedRuns, useWindowFullscreen } from '@/hooks'
 import { chatApi } from '@/services/chat'
-import { Plus, X, Menu, Settings, Minimize2, Maximize2, Loader2, FolderPlus, TreePine, ArrowLeft } from 'lucide-react'
+import { Plus, X, Menu, Settings, Minimize2, Maximize2, Loader2, FolderPlus, TreePine, ArrowLeft, ClipboardCopy, Check } from 'lucide-react'
 import { ChatMessages } from './ChatMessages'
 import { ChatInput, type PrefillPayload } from './ChatInput'
 import { CompactionBanner } from './CompactionBanner'
@@ -13,6 +13,7 @@ import { PermissionSettingsPanel } from './PermissionSettingsPanel'
 import { SessionBreadcrumb } from './SessionBreadcrumb'
 import { DiscussionTreeView } from '@/components/discussions/DiscussionTreeView'
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
+import { messagesToMarkdown } from '@/utils/chatExport'
 import { useSetAtom, useAtomValue } from 'jotai'
 import { Link } from 'react-router-dom'
 import { isTauri } from '@/services/env'
@@ -50,6 +51,7 @@ export function ChatPanel() {
   const [isMobile, setIsMobile] = useState(false)
   const [prefill, setPrefill] = useState<PrefillPayload | null>(null)
   const [showAgentTree, setShowAgentTree] = useState(false)
+  const [copiedChat, setCopiedChat] = useState(false)
   const chat = useChat()
   const detachedRuns = useDetachedRuns(chat.sessionId)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -168,6 +170,27 @@ export function ChatPanel() {
     setSessionTitle(null)
     setShowSessions(false)
   }, [chat.newSession])
+
+  const handleCopyChat = useCallback(async () => {
+    const markdown = messagesToMarkdown(chat.messages, {
+      sessionId: chat.sessionId ?? undefined,
+      projectSlug: chat.sessionMeta?.projectSlug,
+      workspaceSlug: chat.sessionMeta?.workspaceSlug,
+      exportedAt: new Date(),
+    })
+    try {
+      await navigator.clipboard.writeText(markdown)
+      setCopiedChat(true)
+      setTimeout(() => setCopiedChat(false), 2000)
+    } catch {
+      // Fallback: open in a new window as plain text (non-secure context)
+      const win = window.open('', '_blank')
+      if (win) {
+        win.document.write(`<pre style="white-space:pre-wrap;font-family:monospace;padding:16px">${markdown.replace(/</g, '&lt;')}</pre>`)
+        win.document.title = 'Chat Export'
+      }
+    }
+  }, [chat.messages, chat.sessionId, chat.sessionMeta])
 
   const handleSelectSession = useCallback((sessionId: string, targetTurnIndex?: number, title?: string, searchHit?: { snippet: string; createdAt: number; role: 'user' | 'assistant' }) => {
     setScrollToTurn(targetTurnIndex != null ? { turnIndex: targetTurnIndex, snippet: searchHit?.snippet, createdAt: searchHit?.createdAt, role: searchHit?.role } : null)
@@ -361,6 +384,16 @@ export function ChatPanel() {
                   <span className={`absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full ${modeColor} ring-1 ring-[#1a1d27]`} />
                 )}
               </button>
+              {/* Copy chat to clipboard */}
+              {chat.messages.length > 0 && (
+                <button
+                  onClick={handleCopyChat}
+                  className={`p-1.5 rounded-md transition-colors ${copiedChat ? 'text-emerald-400' : 'text-gray-400 hover:text-gray-200 hover:bg-white/[0.04]'}`}
+                  title={copiedChat ? 'Copied!' : 'Copy chat as markdown'}
+                >
+                  {copiedChat ? <Check className="w-4 h-4" /> : <ClipboardCopy className="w-4 h-4" />}
+                </button>
+              )}
               <button
                 onClick={() => setMode('open')}
                 className="p-1.5 rounded-md text-gray-400 hover:text-gray-200 hover:bg-white/[0.04] transition-colors"
@@ -560,6 +593,16 @@ export function ChatPanel() {
               <span className={`absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full ${modeColor} ring-1 ring-[#1a1d27]`} />
             )}
           </button>
+          {/* Copy chat to clipboard */}
+          {chat.messages.length > 0 && (
+            <button
+              onClick={handleCopyChat}
+              className={`p-1.5 rounded-md transition-colors ${copiedChat ? 'text-emerald-400' : 'text-gray-400 hover:text-gray-200 hover:bg-white/[0.04]'}`}
+              title={copiedChat ? 'Copied!' : 'Copy chat as markdown'}
+            >
+              {copiedChat ? <Check className="w-4 h-4" /> : <ClipboardCopy className="w-4 h-4" />}
+            </button>
+          )}
           <button
             onClick={() => setMode('fullscreen')}
             className="p-1.5 rounded-md transition-colors hidden md:flex text-gray-400 hover:text-gray-200 hover:bg-white/[0.04]"
