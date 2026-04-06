@@ -17,6 +17,7 @@ import {
   BarChart3,
   Activity,
   GitCommitHorizontal,
+  Loader2,
 } from 'lucide-react'
 import {
   Badge,
@@ -356,10 +357,17 @@ export function AdminPage() {
 // SECTION: SYNC & WATCHERS
 // ============================================================================
 
+interface WsProjects {
+  workspace: { name: string; slug: string }
+  projects: { id: string; name: string; slug: string; root_path: string }[]
+}
+
 function SyncWatchersSection() {
   const [watchStatus, setWatchStatus] = useState<{ running: boolean; watched_paths: string[] } | null>(null)
+  const [wsProjectGroups, setWsProjectGroups] = useState<WsProjects[]>([])
   const [syncPath, setSyncPath] = useState('')
   const [syncing, setSyncing] = useState(false)
+  const [togglingPaths, setTogglingPaths] = useState<Set<string>>(new Set())
   const toast = useToast()
   const confirmDialog = useConfirmDialog()
 
@@ -372,9 +380,87 @@ function SyncWatchersSection() {
     }
   }, [])
 
+  // Fetch all workspaces + their projects
   useEffect(() => {
     fetchWatchStatus()
+    workspacesApi
+      .list({ limit: 100 })
+      .then(async (res) => {
+        const workspaces = res.items || []
+        const groups: WsProjects[] = await Promise.all(
+          workspaces.map(async (ws) => {
+            try {
+              const projects = await workspacesApi.listProjects(ws.slug)
+              return {
+                workspace: { name: ws.name, slug: ws.slug },
+                projects: projects
+                  .filter((p) => p.root_path)
+                  .map((p) => ({ id: p.id, name: p.name, slug: p.slug, root_path: p.root_path })),
+              }
+            } catch {
+              return { workspace: { name: ws.name, slug: ws.slug }, projects: [] }
+            }
+          }),
+        )
+        setWsProjectGroups(groups.filter((g) => g.projects.length > 0))
+      })
+      .catch(() => {})
   }, [fetchWatchStatus])
+
+  /** All projects flattened (for unlinked path detection) */
+  const allProjects = wsProjectGroups.flatMap((g) => g.projects)
+
+  const isPathWatched = useCallback(
+    (rootPath: string) =>
+      watchStatus?.watched_paths.some(
+        (wp) =>
+          wp === rootPath ||
+          rootPath.startsWith(wp + '/') ||
+          wp.startsWith(rootPath + '/'),
+      ) ?? false,
+    [watchStatus],
+  )
+
+  const handleToggleWatchPath = useCallback(
+    async (path: string, projectId: string | undefined, projectName: string | undefined, currentlyWatched: boolean) => {
+      setTogglingPaths((prev) => new Set(prev).add(path))
+      try {
+        if (currentlyWatched) {
+          if (projectId) {
+            await adminApi.stopWatch(projectId)
+            toast.success(`Watcher stopped for ${projectName}`)
+          } else {
+            await adminApi.stopWatch()
+            toast.success('Watcher stopped')
+          }
+        } else {
+          await adminApi.startWatch({ path, project_id: projectId })
+          toast.success(`Watcher started for ${projectName ?? path}`)
+        }
+        fetchWatchStatus()
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Failed to toggle watcher')
+      } finally {
+        setTogglingPaths((prev) => {
+          const next = new Set(prev)
+          next.delete(path)
+          return next
+        })
+      }
+    },
+    [fetchWatchStatus, toast],
+  )
+
+  /** Watched paths not matching any known project */
+  const unlinkedPaths = watchStatus?.watched_paths.filter(
+    (wp) =>
+      !allProjects.some(
+        (p) =>
+          p.root_path === wp ||
+          wp.startsWith(p.root_path + '/') ||
+          p.root_path.startsWith(wp + '/'),
+      ),
+  ) ?? []
 
   const handleSync = async () => {
     if (!syncPath.trim()) {
@@ -410,17 +496,19 @@ function SyncWatchersSection() {
 
   const handleStopWatch = () => {
     confirmDialog.open({
-      title: 'Stop File Watcher',
-      description: 'Stop the file watcher? You can restart it at any time.',
+      title: 'Stop All Watchers',
+      description: 'Stop all file watchers? You can restart them at any time.',
       variant: 'warning',
-      confirmLabel: 'Stop',
+      confirmLabel: 'Stop All',
       onConfirm: async () => {
         await adminApi.stopWatch()
-        toast.success('File watcher stopped')
+        toast.success('All watchers stopped')
         fetchWatchStatus()
       },
     })
   }
+
+  const activeCount = watchStatus?.watched_paths.length ?? 0
 
   return (
     <CollapsibleSection
@@ -437,7 +525,7 @@ function SyncWatchersSection() {
                 <EyeOff className="w-3 h-3" />
               )}
               {watchStatus.running
-                ? `Watching (${watchStatus.watched_paths.length})`
+                ? `Watching (${activeCount})`
                 : 'Inactive'}
             </span>
           </Badge>
@@ -445,30 +533,101 @@ function SyncWatchersSection() {
       }
       defaultOpen
     >
-      {/* Watched paths */}
-      {watchStatus?.running && watchStatus.watched_paths.length > 0 && (
-        <div className="mb-4 space-y-1">
-          <h4 className="text-xs uppercase tracking-wider text-gray-500 mb-2">Watched Directories</h4>
-          {watchStatus.watched_paths.map((path) => (
-            <div
-              key={path}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/[0.04] text-xs"
-            >
-              <Eye className="w-3.5 h-3.5 text-green-400 shrink-0" />
-              <code className="text-gray-300 font-mono truncate">{path}</code>
+      {/* Watchers grouped by workspace */}
+      {(wsProjectGroups.length > 0 || unlinkedPaths.length > 0) && (
+        <div className="mb-4 space-y-3">
+          <h4 className="text-xs uppercase tracking-wider text-gray-500 mb-2">Watchers</h4>
+
+          {wsProjectGroups.map((group) => (
+            <div key={group.workspace.slug} className="space-y-1">
+              <div className="text-[11px] uppercase tracking-wider text-gray-500 font-medium px-1 mb-1">
+                {group.workspace.name}
+              </div>
+              {group.projects.map((project) => {
+                const isWatched = isPathWatched(project.root_path)
+                const isToggling = togglingPaths.has(project.root_path)
+                return (
+                  <div
+                    key={project.id}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/[0.04] text-xs"
+                  >
+                    <button
+                      onClick={() => handleToggleWatchPath(project.root_path, project.id, project.name, isWatched)}
+                      disabled={isToggling}
+                      className={`p-1 rounded-md transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                        isWatched
+                          ? 'text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10'
+                          : 'text-gray-500 hover:text-gray-300 hover:bg-white/[0.08]'
+                      }`}
+                      title={
+                        isWatched
+                          ? `Watcher active for ${project.name} — click to stop`
+                          : `Watcher inactive for ${project.name} — click to start`
+                      }
+                    >
+                      {isToggling ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : isWatched ? (
+                        <Eye className="w-3.5 h-3.5" />
+                      ) : (
+                        <EyeOff className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                    <span className="text-gray-200 font-medium">{project.name}</span>
+                    <code className="text-gray-500 font-mono truncate ml-auto text-[11px]">{project.root_path}</code>
+                  </div>
+                )
+              })}
             </div>
           ))}
-          <div className="pt-2">
-            <Button variant="danger" size="sm" onClick={handleStopWatch}>
-              <Square className="w-3.5 h-3.5 mr-1.5" />
-              Stop Watcher
-            </Button>
-          </div>
+
+          {/* Unlinked watched paths */}
+          {unlinkedPaths.length > 0 && (
+            <div className="space-y-1">
+              <div className="text-[11px] uppercase tracking-wider text-gray-500 font-medium px-1 mb-1">
+                Unlinked
+              </div>
+              {unlinkedPaths.map((path) => {
+                const isToggling = togglingPaths.has(path)
+                return (
+                  <div
+                    key={path}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/[0.04] text-xs"
+                  >
+                    <button
+                      onClick={() => handleToggleWatchPath(path, undefined, undefined, true)}
+                      disabled={isToggling}
+                      className="p-1 rounded-md transition-all text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Watcher active — click to stop"
+                    >
+                      {isToggling ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Eye className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                    <code className="text-gray-300 font-mono truncate">{path}</code>
+                    <Badge variant="default" className="ml-auto shrink-0">unlinked</Badge>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
+          {/* Global stop button */}
+          {watchStatus?.running && activeCount > 0 && (
+            <div className="pt-1">
+              <Button variant="danger" size="sm" onClick={handleStopWatch}>
+                <Square className="w-3.5 h-3.5 mr-1.5" />
+                Stop All Watchers
+              </Button>
+            </div>
+          )}
         </div>
       )}
 
       {/* Manual sync / start watcher */}
-      <div className={watchStatus?.running && watchStatus.watched_paths.length > 0 ? 'border-t border-white/[0.06] pt-4' : ''}>
+      <div className={activeCount > 0 || wsProjectGroups.length > 0 ? 'border-t border-white/[0.06] pt-4' : ''}>
         <h4 className="text-xs uppercase tracking-wider text-gray-500 mb-2">Sync or Watch a Directory</h4>
         <p className="text-xs text-gray-500 mb-3 leading-relaxed">
           Enter an absolute path to a project directory. <strong className="text-gray-400">Sync</strong> performs a one-time
