@@ -9,6 +9,7 @@ import type {
   PaginatedResponse,
   CreatePlanRequest,
   CreateTaskRequest,
+  SessionWithLinks,
 } from '@/types'
 
 interface ListParams {
@@ -89,4 +90,8 @@ export const plansApi = {
 
   linkCommit: (planId: string, commitSha: string) =>
     api.post(`/plans/${planId}/commits`, { commit_sha: commitSha }),
+
+  /** Get all chat sessions linked to this plan (runner + manual + transitive) */
+  getSessions: (planId: string) =>
+    api.get<SessionWithLinks[]>(`/plans/${planId}/sessions`),
 }

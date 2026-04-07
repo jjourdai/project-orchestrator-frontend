@@ -138,6 +138,56 @@ export interface DetachedSession {
   is_streaming: boolean
 }
 
+// ============================================================================
+// CHAT ↔ PLAN/TASK/RFC LINKING
+// ============================================================================
+
+/** A plan linked to a chat session (via ASSOCIATED_WITH or AgentExecution) */
+export interface ChatLinkedPlan {
+  id: string
+  title: string
+  /** How the link was established: "runner" (via AgentExecution) or "manual" (via ASSOCIATED_WITH) */
+  source: string
+}
+
+/** A task linked to a chat session */
+export interface ChatLinkedTask {
+  id: string
+  title: string
+  source: string
+}
+
+/** An RFC (note) transitively linked via plans */
+export interface ChatLinkedRfc {
+  id: string
+  title: string
+}
+
+/** A session returned by plan/task session endpoints, with full link info */
+export interface SessionWithLinks {
+  session: {
+    id: string
+    cli_session_id?: string
+    project_slug?: string
+    workspace_slug?: string
+    cwd: string
+    title?: string
+    model: string
+    created_at: string
+    updated_at: string
+    message_count: number
+    total_cost_usd?: number
+    preview?: string
+  }
+  links: {
+    linked_plans: ChatLinkedPlan[]
+    linked_tasks: ChatLinkedTask[]
+    linked_rfcs: ChatLinkedRfc[]
+  }
+  /** How this session was found: "runner", "manual", "transitive" */
+  source: string
+}
+
 export interface ChatSession {
   id: string
   cli_session_id?: string
@@ -158,6 +208,12 @@ export interface ChatSession {
   add_dirs?: string[]
   /** Origin of this session if detached (null = normal conversation) */
   spawned_by?: SpawnedBy | null
+  /** Plans linked to this session (via ASSOCIATED_WITH or AgentExecution) */
+  linked_plans?: ChatLinkedPlan[]
+  /** Tasks linked to this session */
+  linked_tasks?: ChatLinkedTask[]
+  /** RFCs transitively linked via plans */
+  linked_rfcs?: ChatLinkedRfc[]
 }
 
 export interface CreateSessionRequest {

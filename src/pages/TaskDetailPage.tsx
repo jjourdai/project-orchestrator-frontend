@@ -1,17 +1,17 @@
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useParams, Link, useLocation } from 'react-router-dom'
-import { useAtomValue } from 'jotai'
-import { ClipboardList, Flag, FolderKanban, GitCommitHorizontal, Pencil } from 'lucide-react'
+import { useAtomValue, useSetAtom } from 'jotai'
+import { ClipboardList, Flag, FolderKanban, GitCommitHorizontal, Pencil, MessageCircle, ScrollText, Folder, Clock } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardContent, LoadingPage, ErrorState, Badge, Button, ConfirmDialog, FormDialog, LinkEntityDialog, TaskStatusBadge, InteractiveStepStatusBadge, InteractiveDecisionStatusBadge, ProgressBar, PageHeader, StatusSelect, TabLayout, ViewToggle } from '@/components/ui'
 import type { ParentLink } from '@/components/ui/PageHeader'
 import { tasksApi, plansApi, projectsApi, workspacesApi, decisionsApi } from '@/services'
 import { useConfirmDialog, useFormDialog, useLinkDialog, useToast, useWorkspaceSlug, useViewTransition, useViewMode } from '@/hooks'
 import { workspacePath } from '@/utils/paths'
-import { taskRefreshAtom, projectRefreshAtom, planRefreshAtom } from '@/atoms'
+import { taskRefreshAtom, projectRefreshAtom, planRefreshAtom, chatPanelModeAtom, chatSessionIdAtom } from '@/atoms'
 import { CreateStepForm, CreateDecisionForm, EditTaskForm, EditStepForm } from '@/components/forms'
 import { CommitList } from '@/components/commits'
 import { UniversalKanban, createStepKanbanConfig } from '@/components/kanban'
-import type { Task, Step, Decision, Commit, TaskStatus, StepStatus, DecisionStatus, Project } from '@/types'
+import type { Task, Step, Decision, Commit, TaskStatus, StepStatus, DecisionStatus, Project, SessionWithLinks } from '@/types'
 
 // The API response structure
 interface TaskApiResponse {
@@ -48,6 +48,8 @@ export function TaskDetailPage() {
   const taskRefresh = useAtomValue(taskRefreshAtom)
   const projectRefresh = useAtomValue(projectRefreshAtom)
   const planRefresh = useAtomValue(planRefreshAtom)
+  const setChatPanelMode = useSetAtom(chatPanelModeAtom)
+  const setChatSessionId = useSetAtom(chatSessionIdAtom)
   const [task, setTask] = useState<Task | null>(null)
   const [steps, setSteps] = useState<Step[]>([])
   const [decisions, setDecisions] = useState<Decision[]>([])
@@ -58,6 +60,9 @@ export function TaskDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState('steps')
+  // Chat sessions linked to this task
+  const [chatSessions, setChatSessions] = useState<SessionWithLinks[]>([])
+  const [chatSessionsLoading, setChatSessionsLoading] = useState(false)
 
   // Parent resolution state
   const [parentPlanId, setParentPlanId] = useState<string | null>(null)
@@ -104,6 +109,18 @@ export function TaskDetailPage() {
   useEffect(() => {
     fetchData()
   }, [fetchData])
+
+  // Lazy-load chat sessions when switching to chat tab
+  useEffect(() => {
+    if (activeTab !== 'chat' || !taskId) return
+    let cancelled = false
+    setChatSessionsLoading(true)
+    tasksApi.getSessions(taskId)
+      .then((data) => { if (!cancelled) setChatSessions(data || []) })
+      .catch(() => { if (!cancelled) setChatSessions([]) })
+      .finally(() => { if (!cancelled) setChatSessionsLoading(false) })
+    return () => { cancelled = true }
+  }, [activeTab, taskId])
 
   // Resolve parent plan & project
   useEffect(() => {
@@ -301,6 +318,7 @@ export function TaskDetailPage() {
   const tabs = [
     { id: 'steps', label: 'Steps', count: steps.length },
     { id: 'dependencies', label: 'Dependencies', count: blockers.length + blocking.length },
+    { id: 'chat', label: 'Chat', icon: <MessageCircle className="w-4 h-4" />, count: chatSessions.length || undefined },
     { id: 'artefacts', label: 'Artefacts', count: decisions.length + commits.length },
   ]
 
@@ -575,6 +593,111 @@ export function TaskDetailPage() {
                 </CardContent>
               </Card>
             </div>
+          </div>
+        )}
+
+        {/* Tab: Chat (linked sessions) */}
+        {activeTab === 'chat' && (
+          <div className="pt-4">
+            <Card>
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <MessageCircle className="w-4 h-4 text-gray-500" />
+                  <CardTitle>Chat Sessions ({chatSessions.length})</CardTitle>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {chatSessionsLoading ? (
+                  <div className="flex items-center justify-center py-8 text-gray-500 text-sm">
+                    <div className="w-4 h-4 border-2 border-gray-600 border-t-indigo-400 rounded-full animate-spin mr-2" />
+                    Loading sessions...
+                  </div>
+                ) : chatSessions.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-8 text-gray-500 text-sm">
+                    <MessageCircle className="w-8 h-8 text-gray-700 mb-2" />
+                    <p>No chat sessions linked to this task</p>
+                    <p className="text-xs text-gray-600 mt-1">Sessions are linked automatically when a task is executed via the runner.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {chatSessions.map((sw) => (
+                      <button
+                        key={sw.session.id}
+                        onClick={() => {
+                          setChatSessionId(sw.session.id)
+                          setChatPanelMode('open')
+                        }}
+                        className="block w-full text-left p-3 rounded-lg bg-white/[0.02] border border-white/[0.06] hover:bg-white/[0.05] hover:border-white/[0.10] transition-all group cursor-pointer"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm text-gray-200 font-medium truncate">
+                                {sw.session.title || `Session ${sw.session.id.slice(0, 8)}`}
+                              </span>
+                              <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-medium shrink-0 ${
+                                sw.source === 'runner'
+                                  ? 'bg-blue-500/15 text-blue-400'
+                                  : 'bg-emerald-500/15 text-emerald-400'
+                              }`}>
+                                {sw.source}
+                              </span>
+                            </div>
+
+                            {/* Linked RFCs */}
+                            {sw.links.linked_rfcs.length > 0 && (
+                              <div className="flex flex-wrap items-center gap-1 mt-1.5">
+                                <ScrollText className="w-3 h-3 text-gray-600 shrink-0" />
+                                {sw.links.linked_rfcs.map((r) => (
+                                  <span
+                                    key={r.id}
+                                    className="text-[10px] bg-purple-500/10 text-purple-400 px-1.5 py-0.5 rounded-full truncate max-w-[200px]"
+                                    title={`RFC: ${r.title}`}
+                                  >
+                                    {r.title}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Metadata */}
+                            <div className="flex items-center gap-2 mt-1.5 text-[10px] text-gray-600">
+                              <span className="flex items-center gap-0.5">
+                                <Clock className="w-2.5 h-2.5" />
+                                {new Date(sw.session.created_at).toLocaleDateString()}
+                              </span>
+                              <span>&middot;</span>
+                              <span>{sw.session.message_count} msgs</span>
+                              {sw.session.model && (
+                                <>
+                                  <span>&middot;</span>
+                                  <span className="truncate max-w-[100px]">{sw.session.model}</span>
+                                </>
+                              )}
+                              {sw.session.total_cost_usd != null && sw.session.total_cost_usd > 0 && (
+                                <>
+                                  <span>&middot;</span>
+                                  <span>${sw.session.total_cost_usd.toFixed(2)}</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+
+                          {sw.session.cwd && (
+                            <div className="flex items-center gap-1 shrink-0">
+                              <Folder className="w-3 h-3 text-gray-600" />
+                              <span className="text-[10px] text-gray-600 truncate max-w-[120px]">
+                                {sw.session.cwd.replace(/^\/(?:Users|home)\/[^/]+\//, '~/')}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </div>
         )}
 
