@@ -8,6 +8,7 @@ import type {
   StepProgress,
   PaginatedResponse,
   UpdateTaskRequest,
+  SessionWithLinks,
 } from '@/types'
 
 interface ListParams {
@@ -108,4 +109,8 @@ export const tasksApi = {
 
   getPrompt: (planId: string, taskId: string) =>
     api.get<{ prompt: string }>(`/plans/${planId}/tasks/${taskId}/prompt`),
+
+  /** Get all chat sessions linked to this task */
+  getSessions: (taskId: string) =>
+    api.get<SessionWithLinks[]>(`/tasks/${taskId}/sessions`),
 }

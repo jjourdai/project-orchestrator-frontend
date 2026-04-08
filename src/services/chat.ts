@@ -15,6 +15,7 @@ import type {
   PermissionConfig,
   SessionInfo,
   SessionTreeNode,
+  SessionWithLinks,
 } from '@/types'
 
 interface ListSessionsParams {
@@ -23,6 +24,10 @@ interface ListSessionsParams {
   project_slug?: string
   /** Filter sessions by workspace */
   workspace_slug?: string
+  /** Filter sessions linked to a specific plan */
+  plan_id?: string
+  /** Filter sessions linked to a specific task */
+  task_id?: string
 }
 
 interface GetMessagesParams {
@@ -102,4 +107,18 @@ export const chatApi = {
   /** Get agent execution records for a plan run */
   getAgentExecutions: (runId: string) =>
     api.get<AgentExecution[]>(`/runs/${runId}/agent-executions`),
+
+  // ── Chat ↔ Plan/Task/RFC Linking ──
+
+  /** Get all chat sessions linked to a plan (runner + manual + transitive) */
+  getPlanSessions: (planId: string) =>
+    api.get<SessionWithLinks[]>(`/plans/${planId}/sessions`),
+
+  /** Get all chat sessions linked to a task */
+  getTaskSessions: (taskId: string) =>
+    api.get<SessionWithLinks[]>(`/tasks/${taskId}/sessions`),
+
+  /** Create an ASSOCIATED_WITH relation between a session and a Plan or Task */
+  associateSession: (sessionId: string, entityType: 'Plan' | 'Task', entityId: string, source: string = 'manual') =>
+    api.post(`/chat/sessions/${sessionId}/associate`, { entity_type: entityType, entity_id: entityId, source }),
 }

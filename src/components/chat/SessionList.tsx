@@ -5,6 +5,9 @@ import { chatApi, getEventBus, workspacesApi } from '@/services'
 import { useActiveRunTracker, useDetachedRuns } from '@/hooks'
 import type {
   ChatSession,
+  ChatLinkedPlan,
+  ChatLinkedRfc,
+  ChatLinkedTask,
   CrudEvent,
   MessageSearchResult,
   PermissionMode,
@@ -12,7 +15,8 @@ import type {
   SpawnedBy,
 } from '@/types'
 import { Select, PulseIndicator } from '@/components/ui'
-import { Folder, Trash2, Search, X, Loader2, ChevronRight, MessageCircle, Play, GitBranch, ChevronDown, Clock, Pencil } from 'lucide-react'
+import { workspacePath } from '@/utils/paths'
+import { Folder, Trash2, Search, X, Loader2, ChevronRight, MessageCircle, Play, GitBranch, ChevronDown, Clock, Pencil, ClipboardList, ScrollText, ListChecks } from 'lucide-react'
 
 interface SessionListProps {
   activeSessionId?: string | null
@@ -91,6 +95,58 @@ function SpawnedBadge({ spawnedBy }: { spawnedBy: SpawnedBy }) {
       <GitBranch className="w-2.5 h-2.5" />
       {style.label}
     </span>
+  )
+}
+
+// ============================================================================
+// Linked entity badges (plan / task / RFC)
+// ============================================================================
+
+function PlanBadge({ plan, wsSlug }: { plan: ChatLinkedPlan; wsSlug: string }) {
+  return (
+    <a
+      href={workspacePath(wsSlug, `/plans/${plan.id}`)}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={(e) => e.stopPropagation()}
+      title={`Plan: ${plan.title} (${plan.source})`}
+      className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-medium bg-blue-500/15 text-blue-400 hover:bg-blue-500/25 transition-colors shrink-0 max-w-[120px]"
+    >
+      <ClipboardList className="w-2.5 h-2.5 shrink-0" />
+      <span className="truncate">{plan.title}</span>
+    </a>
+  )
+}
+
+function RfcBadge({ rfc, wsSlug }: { rfc: ChatLinkedRfc; wsSlug: string }) {
+  return (
+    <a
+      href={workspacePath(wsSlug, `/notes/${rfc.id}`)}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={(e) => e.stopPropagation()}
+      title={`RFC: ${rfc.title}`}
+      className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-medium bg-purple-500/15 text-purple-400 hover:bg-purple-500/25 transition-colors shrink-0 max-w-[120px]"
+    >
+      <ScrollText className="w-2.5 h-2.5 shrink-0" />
+      <span className="truncate">{rfc.title}</span>
+    </a>
+  )
+}
+
+function TaskBadge({ task, wsSlug }: { task: ChatLinkedTask; wsSlug: string }) {
+  return (
+    <a
+      href={workspacePath(wsSlug, `/tasks/${task.id}`)}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={(e) => e.stopPropagation()}
+      title={`Task: ${task.title} (${task.source})`}
+      className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-medium bg-amber-500/10 text-amber-400/80 hover:bg-amber-500/20 transition-colors shrink-0 max-w-[120px]"
+    >
+      <ListChecks className="w-2.5 h-2.5 shrink-0" />
+      <span className="truncate">{task.title}</span>
+    </a>
   )
 }
 
@@ -211,6 +267,7 @@ export const SessionList = memo(function SessionList({ activeSessionId, onSelect
   // Filter state
   const [projects, setProjects] = useState<Project[]>([])
   const [selectedProject, setSelectedProject] = useState<string>('')
+  const [selectedPlanOrRfc, setSelectedPlanOrRfc] = useState<string>('')
 
   // Inline rename state
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
@@ -261,7 +318,10 @@ export const SessionList = memo(function SessionList({ activeSessionId, onSelect
           limit: SESSION_PAGE_SIZE,
           offset: loadMore ? offsetRef.current : 0,
         }
-        if (selectedProject) {
+        // When a plan/RFC filter is active, always fetch workspace-level
+        // so we get all sessions with links (they're workspace-scoped).
+        // The project filter is then applied client-side in filteredSessions.
+        if (selectedProject && !selectedPlanOrRfc) {
           params.project_slug = selectedProject
         } else if (activeWsSlug) {
           params.workspace_slug = activeWsSlug
@@ -287,7 +347,7 @@ export const SessionList = memo(function SessionList({ activeSessionId, onSelect
         }
       }
     },
-    [selectedProject, activeWsSlug],
+    [selectedProject, selectedPlanOrRfc, activeWsSlug],
   )
 
   // Initial load + refresh on filter/CRUD changes
@@ -351,11 +411,53 @@ export const SessionList = memo(function SessionList({ activeSessionId, onSelect
     }
   }, [debouncedQuery, selectedProject])
 
-  // Filter out spawned sessions when toggle is off, then group by date
+  // Load plan/RFC options once from workspace-level sessions (not project-filtered)
+  // so they're always visible regardless of which project is selected
+  const [planRfcOptions, setPlanRfcOptions] = useState<{ value: string; label: string }[]>([])
+
+  useEffect(() => {
+    if (!activeWsSlug) {
+      setPlanRfcOptions([])
+      return
+    }
+    chatApi.listSessions({ workspace_slug: activeWsSlug, limit: 100 }).then((data) => {
+      const seen = new Map<string, { label: string; type: 'plan' | 'rfc' }>()
+      for (const s of (data.items || [])) {
+        for (const p of s.linked_plans ?? []) {
+          if (!seen.has(`plan:${p.id}`)) seen.set(`plan:${p.id}`, { label: p.title, type: 'plan' })
+        }
+        for (const r of s.linked_rfcs ?? []) {
+          if (!seen.has(`rfc:${r.id}`)) seen.set(`rfc:${r.id}`, { label: r.title, type: 'rfc' })
+        }
+      }
+      setPlanRfcOptions(
+        Array.from(seen.entries()).map(([value, { label, type }]) => ({
+          value,
+          label: `${type === 'rfc' ? '📜 ' : '📋 '}${label}`,
+        }))
+      )
+    }).catch(() => setPlanRfcOptions([]))
+  }, [activeWsSlug, chatSessionRefresh])
+
+  // Filter out spawned sessions when toggle is off + plan/RFC filter + client-side project filter
   const filteredSessions = useMemo(() => {
-    if (showSpawned) return sessions
-    return sessions.filter((s) => !s.spawned_by)
-  }, [sessions, showSpawned])
+    let result = sessions
+    if (!showSpawned) result = result.filter((s) => !s.spawned_by)
+    if (selectedPlanOrRfc) {
+      const [type, id] = selectedPlanOrRfc.split(':')
+      result = result.filter((s) => {
+        if (type === 'plan') return s.linked_plans?.some((p) => p.id === id)
+        if (type === 'rfc') return s.linked_rfcs?.some((r) => r.id === id)
+        return true
+      })
+      // When plan/RFC filter is active, the fetch is workspace-level,
+      // so apply project filter client-side if also set
+      if (selectedProject) {
+        result = result.filter((s) => s.project_slug === selectedProject)
+      }
+    }
+    return result
+  }, [sessions, showSpawned, selectedPlanOrRfc, selectedProject])
 
   const groupedSessions = useMemo(() => groupSessionsByDate(filteredSessions), [filteredSessions])
 
@@ -506,6 +608,21 @@ export const SessionList = memo(function SessionList({ activeSessionId, onSelect
           {/* Expandable children indicator */}
           <ChildrenIndicator sessionId={session.id} onSelect={onSelect} />
 
+          {/* Linked plans / tasks / RFCs badges */}
+          {activeWsSlug && (session.linked_plans?.length || session.linked_tasks?.length || session.linked_rfcs?.length) ? (
+            <div className="flex flex-wrap items-center gap-1 mt-1">
+              {session.linked_plans?.map((p) => (
+                <PlanBadge key={p.id} plan={p} wsSlug={activeWsSlug} />
+              ))}
+              {session.linked_rfcs?.map((r) => (
+                <RfcBadge key={r.id} rfc={r} wsSlug={activeWsSlug} />
+              ))}
+              {session.linked_tasks?.map((t) => (
+                <TaskBadge key={t.id} task={t} wsSlug={activeWsSlug} />
+              ))}
+            </div>
+          ) : null}
+
           {/* CWD */}
           {session.cwd && (
             <div className="flex items-center gap-1 mt-0.5 min-w-0">
@@ -626,6 +743,20 @@ export const SessionList = memo(function SessionList({ activeSessionId, onSelect
             ]}
             placeholder="All projects"
             icon={<Folder className="w-3 h-3" />}
+          />
+        )}
+
+        {/* Plan / RFC filter (populated from workspace-level sessions) */}
+        {planRfcOptions.length > 0 && (
+          <Select
+            value={selectedPlanOrRfc}
+            onChange={setSelectedPlanOrRfc}
+            options={[
+              { value: '', label: 'All plans & RFCs' },
+              ...planRfcOptions,
+            ]}
+            placeholder="All plans & RFCs"
+            icon={<ClipboardList className="w-3 h-3" />}
           />
         )}
 
